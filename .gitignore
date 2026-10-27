@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+*.bak
+.venv/
+.idea/
+.vscode/
+.DS_Store
+_preview.html

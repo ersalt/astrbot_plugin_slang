@@ -1,176 +1,166 @@
-# astrbot_plugin_slang
+# 群语汇 · astrbot_plugin_slang
 
-群黑话学习与注入。为本地 26B 小模型写的轻量版，重点是**不赌模型的自觉**。
+给 AstrBot 用的**群黑话自动学习与注入**插件。让机器人自己从群聊里学会黑话，聊天时按关键词命中注入上下文，另外附带一个可选的梗百科词库。
 
-## 怎么装
+为本地小模型（26B 级别）设计，重点是**不赌模型的自觉**：黑话靠关键词机械命中，不指望它记得去查。
 
-1. 把整个 `astrbot_plugin_slang` 文件夹复制到
-   `<AstrBot 实例>/core/data/plugins/` 下；
-2. 在后台插件页启用它，重载一次；
-3. 首次启动会自动把同目录的 `seed.txt` 导入为手动词条（仅当库为空时）。
+## 它做什么
 
-同时去后台**停用旧的 `astrbot_plugin_jargon`**，两套学习逻辑不要同时跑。
+- **自动学**：按群累计消息，达到阈值后交给 LLM 提取黑话候选
+- **自己审**：模型判断这条能不能写成「X 是指 Y」，有把握的直接入库，没把握的进待审
+- **人工管**：页面上审核、修改、删除、改归属，待审通过才参与注入
+- **按群隔离**：同一个词在不同群可以有不同含义
+- **命中注入**：每次请求前匹配关键词，命中的条目塞进 system prompt，最多 3 条
+- **梗百科兜底**：黑话没命中时，从梗Wiki 快照里补 1 条（可关）
 
-## 工作方式
+## 工作流程
 
 ```
-群消息 → 落 SQLite 缓冲 → 攒够 learn_frequency 条
-      → LLM 提取黑话 → LLM 自审（确定/推测）
-      → 入库并打标记（自审过关 / 待复核）
-回复时 → 拿用户这句话做关键词匹配 → 最多 3 条拼进 system_prompt
+群消息 → 写入 buffer（按 umo 分组）
+      → 攒够 learn_frequency 条
+      → LLM 提取（最多 extract_max 条）
+      → 模型自审（certain？）
+          ├─ 是 → 直接进 jargon（黑话库，可注入）
+          └─ 否 → 进 pending（待审，不可注入）
+      → 每次 LLM 请求：关键词匹配 jargon
+          ├─ 命中 → 注入（最多 inject_max 条）
+          └─ 没命中 → 查 wiki（最多 1 条，带来源标注）
 ```
 
-三个关键取舍：
+## 安装
 
-- **缓冲和计数都在 SQLite 里**，重启、热重载都不丢。旧版把计数放内存，改个配置就归零。
-- **注入不调模型**，纯字符串匹配，毫秒级、零成本，不会出现“模型该查却没查”。
-- **提取结果不一定可信**，所以先自审再入库，但自审不过关的只是不注入，不会删，留给你人工复核。
+1. 把整个 `astrbot_plugin_slang` 目录放进 `data/plugins/`
+2. 重启 AstrBot（或在后台插件页重载）
+3. 在插件管理里启用，按需改配置
 
-## 管理页面
-
-装好后在后台插件详情里打开本插件页面（`pages/kb/index.html`），左边是四级导航，右边是条目：
-
-- **手动黑话**：下分「全局」和各个群，看的是来源为手动录入的词条
-- **群黑话**：按群分组，看的是自动学到的词条
-- **待审黑话**：还没人工通过的全部条目，同样按群分组
-- **梗百科**：从梗Wiki 同步的词条，只读，不能改也不能删（下次同步会覆盖）
-
-点父列表可以折叠/展开子列表；群名过长会省略号截断。
-
-每条是一个气泡，左边词条名、中间含义、右边 2×2 四个按钮：自审 通过/不通过、人工 通过/不通过、修改、删除。点「修改」弹窗里可以改词条名、内容、归属（全局或某个群）。
-
-设置弹窗里除了模型和频率，还有梗百科的自动同步：开关、间隔天数、每天几点检查，以及当前梗库条数和上次同步时间。
-
-右上角搜索框按 `/` 聚焦，`Esc` 关弹窗。左侧底部有手动录入和设置。
+依赖：`aiohttp` 由 AstrBot 自带；其余只用标准库。
 
 ## 指令
 
+前缀 `/yh`（语汇），全部仅管理员可用。
+
 | 指令 | 作用 |
 | --- | --- |
-| `/yh list [页]` | 列出词条，带标记 |
-| `/yh pending` | 只看待复核 |
-| `/yh search 关键词` | 按名字/含义搜 |
-| `/yh add global 名称 含义` | 手动录入，全局 |
-| `/yh add group 名称 含义` | 手动录入，只在当前群生效 |
-| `/yh approve 名称` | 标记人工过关 |
-| `/yh promote 名称` | 群词条提升为全局 |
-| `/yh del 名称` | 删除 |
+| `/yh list [页]` | 列黑话库，每页 8 条 |
+| `/yh pending` | 看前 10 条待审 |
+| `/yh search 关键词` | 按名称或含义搜 |
+| `/yh add global\|group 名称 含义` | 手动录入 |
+| `/yh approve 名称` | 待审 → 通过；已在库则驳回回待审 |
+| `/yh del 名称` | 删除（词条或待审） |
+| `/yh promote 名称` | 设为全局 |
 | `/yh stat` | 统计 |
-| `/yh check 一句话` | 试一下这句话会注入什么 |
-
-名称也可以填 `#12` 这种 id。同名条目分属不同群时，用 id 更准。
-
-## 标记含义
-
-```
-人工✅  你确认过的（/yh approve 或 /yh add）
-自审✅  模型自审认为“能写成 X 是指 Y”
-自审✗   自审认为含义含糊，只进待复核，默认不注入
-```
-
-默认只注入 `人工✅` 或 `自审✅`；想让待复核的也参与，把 `inject_pending` 打开（不建议）。
+| `/yh check 一句话` | 预览这句话会注入什么 |
 
 ## 配置
 
-| 项 | 默认 | 说明 |
+后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 13 项。
+
+| 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `enabled` | true | 总开关 |
-| `auto_learn` | true | 关掉就只做人工维护 |
-| `learn_frequency` | 50 | 每群攒多少条触发一次 |
-| `extract_max` | 5 | 单次最多提取几条 |
-| `inject_max` | 3 | 单次最多注入几条 |
-| `max_meaning_chars` | 200 | 单条含义字数上限 |
-| `inject_pending` | false | 待复核是否也注入 |
-| `provider_id` | 空 | 提取用哪个模型，留空用会话模型 |
-| `listen_private` | false | 是否学私聊 |
-| `blacklist_groups` | 空 | 不学的群号 |
+| `enabled` | true | 总开关：关掉后不学习也不注入 |
+| `auto_learn` | true | 只关学习，注入照常 |
+| `learn_frequency` | 50 | 每个群攒多少条消息触发一次提取（5–10000） |
+| `extract_max` | 5 | 单次提取上限（1–100） |
+| `inject_max` | 3 | 单次注入上限（1–50） |
+| `max_meaning_chars` | 200 | 单条含义字数上限（20–1000） |
+| `provider_id` | 空 | 提取用的模型，留空用当前会话模型 |
+| `listen_private` | false | 是否也学私聊 |
+| `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
+| `wiki_enable` | true | 启用梗百科；关掉后隐藏侧栏入口，也不参与注入 |
+| `wiki_sync_enable` | false | 是否定时同步梗Wiki |
+| `wiki_sync_interval_days` | 7 | 同步间隔（天，1–365） |
+| `wiki_sync_time` | 04:30 | 每天几点检查，HH:MM |
+
+## 管理页面
+
+后台插件详情里打开本插件页面，左侧四个入口：
+
+- **手动**：人工录入的词条（`source=manual`）
+- **黑话库**：模型学来的词条（`source=ai`）
+- **待审**：`pending` 表里的草稿，**永远不会被注入**
+- **梗百科**：梗Wiki 快照，只读
+
+父项可折叠；群名过长省略号；数字圆圈右对齐。
+
+每条三个按钮：
+
+- **审核**：待审里 = 通过并移入黑话库；黑话库里 = 驳回并移回待审
+- **修改**：改名称、含义、归属（全局 / 某个群）
+- **删除**：二次确认，直接删掉
+
+列表带分页，梗百科和待审都一样。
+
+## 审核模型
+
+只有两个状态，物理分表：
+
+| 表 | 含义 | 参与注入 |
+| --- | --- | --- |
+| `jargon` | 已通过 | ✅ |
+| `pending` | 待审 / 草稿 | ❌ |
+
+- 学习中模型自审通过的，**直接进 `jargon`**，理由存在 `auto_note`（页面显示为「理由：…」）
+- 没把握的进 `pending`，理由同样记录
+- 页面「审核」= 移动条目，不是删除；通过后从待审消失、出现在手动或黑话库
+- 没有「人工通过 / 自审通过」两套标记，只有一个状态
+
+## 梗百科
+
+词条来自 [cnmeme.wiki](https://cnmeme.wiki) 的公开只读 API（[文档](https://cnmeme.wiki/developers/api)），不需要 Key。
+
+- 手动同步：`python tools/sync_memes.py --db <数据目录>/jargon.db`，加 `--full` 全量重拉
+- 自动同步：设置里打开后，每天到点检查，距上次超过间隔天数才拉增量
+- 限速：0.5 秒/页，429 遵循 `Retry-After`
+- 只拉列表接口（自带摘要），6668 条约 223 次请求，不逐条抓详情
+- 注入时带「梗Wiki」来源标注
+
+关掉 `wiki_enable` 后，侧栏入口、注入、相关设置一起隐藏。
 
 ## 数据库
 
-`data/plugin_data/astrbot_plugin_slang/jargon.db`
+SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模式。
 
-- `jargon`：`name + scope` 唯一。`scope` 为空表示全局，否则是群号；`source` 区分 `manual` / `ai`；`review_auto` / `review_manual` 两个审核标记。
-- `buffer`：待学习的原始消息，按 `umo` 分组，触发后清空；启动时清理 7 天前的残留。
-- `meta`：存 `schema_version`。
+| 表 | 内容 |
+| --- | --- |
+| `jargon` | 已通过词条：name / aliases / meaning / scope / source / count / auto_note / evidence |
+| `pending` | 待审草稿，字段同上 |
+| `wiki` | 梗快照：title / tags / summary / updated_at |
+| `buffer` | 待学消息，按 umo 分组，启动清 7 天前，超过 2 万行自动截断 |
+| `meta` | schema_version、wiki_synced_at |
 
-首次启动会自动把 v1（带 `category` 字段的旧表）迁移到 v2，迁移前把原库备份成 `jargon.db.v1.bak`。同名同作用域的重复条目会合并：手动条目优先，次数相加。
+当前结构版本 **v4**。启动时按顺序自动迁移 v1 → v2 → v3 → v4，每次迁移前备份：
 
-想看内容直接：
-
-```sql
-SELECT id,name,meaning,scope,source,count,review_auto,review_manual FROM jargon ORDER BY id DESC;
 ```
+jargon.db.v1.bak   jargon.db.v2.bak   jargon.db.v3.bak
+```
+
+迁移会重建表（SQLite 删列只能重建），文件会临时变大，跑一次维护回收：
+
+```bash
+python tools/db_maintain.py --db <数据目录>/jargon.db
+```
+
+做 `VACUUM + ANALYZE`。实测 v4 迁移后 6.62MB → 3.46MB。
 
 ## 已知限制
 
-- 关键词是子串匹配，`文锋` 这种半截词需要在 `aliases` 里补；
-- 自审质量取决于提取用的模型，26B 偶尔会把普通词当黑话，这就是待复核队列存在的意义；
-- 每条含义最多 200 字、单次最多 3 条，是给小模型定的硬上限，嫌少自己调配置。
-
-## 梗库（梗Wiki 公开 API）
-
-黑话没命中时，从 `wiki` 表兜底注入 1 条梗，只给一句用法，结尾带来源「梗Wiki」。
-
-数据来自 [梗Wiki 开发者 API](https://cnmeme.wiki/developers/api)：只读公开词条，**无需登录或 API Key**。
-
-```bash
-python tools/sync_memes.py                # 增量（按 updated_at 水位）
-python tools/sync_memes.py --full         # 全量重拉
-python tools/sync_memes.py --max-pages 2  # 试水
-```
-
-接口约束（照文档执行）：
-
-- `limit` 最大 30，按更新时间倒序，用 `has_more` 翻页
-- 搜索缓存 60 秒、详情 120 秒，支持 ETag / 304
-- 429 要遵守 `Retry-After`；文档明确要求「限制并发、不要密集轮询」，脚本默认 0.5 秒一页
-- 内容使用时保留来源
-
-`wiki` 表只存 `title` / `tags` / `summary` / `usage` / `origin` / `updated_at`。匹配**只认标题**，不认 tags——tags 里全是「表情包」「天天」这类分类词，拿去匹配会疯狂误命中。
-
-## 注入规则（审核为什么有意义）
-
-默认**只有人工通过（人工✅）的词条会被注入**。自审过关但没人确认的，只进「待审黑话」，模型检索不到。
-
-如果想让自审结果也直接生效，把设置里的「自审过关也参与注入」打开——但那样审核就退化成事后抽查了，默认关。
-
-「待审黑话」是一个只读的隔离区：能看、能改、能通过，但不会被注入、不会被匹配。
-
-## 数据库维护
-
-- 启动时清理 7 天前的 `buffer`；超过 2 万行会被自动截断，不会无限增长。
-- WAL 自动 checkpoint 512 页、WAL 上限 4MB，避免附属文件膨胀。
-- 长期增删后可跑一次：
-
-```bash
-python tools/db_maintain.py
-```
-
-它做 `VACUUM + ANALYZE`，回收空闲页并更新查询统计。首次跑把 8.79MB 收到了 3.36MB（2249 页 → 859 页）。
-
-### 待审是独立表
-
-`pending` 表存未人工通过的词条，`jargon` 只存已通过的。学习只写 `pending`；通过时整行搬到 `jargon` 并标记人工通过；删除只删 `pending`。注入只读 `jargon`，所以待审永远不会被模型检索到。
-
-列表中「通过」按钮是**移动**，不是删除——通过后条目会从待审消失，出现在「手动黑话」或「群黑话」里。
-
-### v4 结构
-
-`jargon` 去掉 `origin_scope`，`wiki` 去掉 `usage` / `origin`——这三列从来没写入过。补了两个索引：`pending(updated_at)`、`jargon(source, updated_at)`。
-
-迁移会自动备份成 `jargon.db.v3.bak`。迁移本身会临时把文件撑大（复制表），跑一次 `tools/db_maintain.py` 做 VACUUM 就能回收：实测 3.47MB → 6.62MB → 3.46MB。
+- 关键词是子串匹配，半截词要靠 `aliases` 补
+- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`
+- 模型自审可能误放行；不放心就把 `auto_learn` 关掉，只手动录入
+- 每条含义最多 `max_meaning_chars` 字、单次最多 `inject_max` 条
+- 梗库只存摘要，没有正文和「怎么接」，需要更详细的用法得另做
 
 ## 来源与致谢
 
-功能参考了三个项目，具体边界写在 [NOTICE.md](./NOTICE.md)：
+具体边界见 [NOTICE.md](./NOTICE.md)。
 
 | 项目 | 许可 | 我们用了什么 |
 | --- | --- | --- |
-| [MaiBot](https://github.com/Mai-with-u/MaiBot) | 自定义 EULA（非开源许可） | 只借鉴“自动学黑话再注入”的思路，未使用代码 |
+| [MaiBot](https://github.com/Mai-with-u/MaiBot) | 自定义 EULA（非开源许可） | 只借鉴「自动学黑话再注入」的思路，未使用代码 |
 | [astrbot_plugin_jargon](https://github.com/sleep430/astrbot_plugin_jargon) | 仓库无 LICENSE（保留所有权利） | 只借鉴流程与字段设计，未使用代码 |
 | [astrbot_plugin_memewiki](https://github.com/in1t1a1/astrbot_plugin_memewiki) | MIT | 参考 cnmeme.wiki 公开 API 的同步方式，独立实现 |
 
-梗词条来自 [cnmeme.wiki](https://cnmeme.wiki) 公开只读 API，版权归站点及原作者；本项目不打包词库，注入时保留来源标注。
+梗词条来自 cnmeme.wiki，版权归站点及原作者；本项目不打包词库，只本地缓存，注入时保留来源标注。
 
 ## 许可
 
