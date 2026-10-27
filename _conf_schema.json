@@ -12,22 +12,30 @@
   "learn_frequency": {
     "description": "每个群累计多少条消息触发一次提取",
     "type": "int",
-    "default": 50
+    "default": 50,
+    "min": 5,
+    "max": 10000
   },
   "extract_max": {
     "description": "单次提取的最大条数",
     "type": "int",
-    "default": 5
+    "default": 5,
+    "min": 1,
+    "max": 100
   },
   "inject_max": {
     "description": "单次注入的最大条数",
     "type": "int",
-    "default": 3
+    "default": 3,
+    "min": 1,
+    "max": 50
   },
   "max_meaning_chars": {
     "description": "单条含义的字数上限，超出截断",
     "type": "int",
-    "default": 200
+    "default": 200,
+    "min": 20,
+    "max": 1000
   },
   "provider_id": {
     "description": "提取用的模型 ID，留空用当前会话模型",
@@ -57,7 +65,9 @@
   "wiki_sync_interval_days": {
     "description": "梗库自动同步间隔（天）",
     "type": "int",
-    "default": 7
+    "default": 7,
+    "min": 1,
+    "max": 365
   },
   "wiki_sync_time": {
     "description": "每天几点几分检查同步，HH:MM",
