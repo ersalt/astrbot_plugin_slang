@@ -188,7 +188,11 @@ const state = { bucket: "manual", scope: "", search: "", tree: null, cache: new 
 
 function toast(msg){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 2000);
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+window.addEventListener("error", e => toast("页面脚本出错：" + (e.message || "未知")));
+window.addEventListener("unhandledrejection", e =>
+  toast("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知")));
 }
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -301,7 +305,14 @@ async function loadList(){
     : `<div class="empty">这里还没有词条</div>`;
 }
 
-async function reload(){ await loadTree(); await loadList(); }
+async function reload(){
+  try {
+    await loadTree();
+    await loadList();
+  } catch (err) {
+    toast("加载失败：" + (err && err.message ? err.message : err));
+  }
+}
 
 /* ---------- 导航 ---------- */
 $("nav").addEventListener("click", e => {
