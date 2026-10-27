@@ -83,6 +83,12 @@ body{background:var(--bg);color:var(--text);
 .pager button{border:1px solid var(--line);background:#fff;border-radius:8px;
   padding:5px 12px;cursor:pointer;font:inherit;font-size:13px}
 .pager button:disabled{opacity:.4;cursor:default}
+.set-group{margin-bottom:6px}
+.set-group + .set-group{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.set-title{font-size:12px;color:var(--muted);font-weight:600;margin:2px 0 8px}
+.set-row{display:flex;align-items:center;gap:8px;font-size:13px;color:#3a3b40;
+  padding:5px 0;cursor:pointer}
+.set-row input{width:auto}
 
 input,select,textarea,button{font:inherit;color:var(--text);background:#fff;
   border:1px solid var(--line);border-radius:9px;padding:6px 10px}
@@ -96,7 +102,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 .mask{position:fixed;inset:0;background:rgba(20,20,30,.28);display:none;
   align-items:center;justify-content:center;padding:20px;z-index:20}
 .mask.on{display:flex}
-.modal{width:min(520px,100%);padding:18px}
+.modal{width:min(520px,100%);padding:18px;max-height:86vh;overflow:auto}
 .modal h3{font-size:15px;margin-bottom:14px}
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
 .field label{font-size:12px;color:var(--muted)}
@@ -175,32 +181,8 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <div class="mask" id="setMask">
   <div class="card modal">
     <h3>设置</h3>
-    <div class="field"><label>分析模型</label><select id="providerSelect"></select></div>
-    <div class="form-row">
-      <div class="field"><label>学习频率</label><input type="number" id="cfgFreq" min="5" max="10000" /></div>
-      <div class="field"><label>提取上限</label><input type="number" id="cfgExtract" min="1" max="100" /></div>
-      <div class="field"><label>注入上限</label><input type="number" id="cfgInject" min="1" max="50" /></div>
-    </div>
-    <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="enabledSwitch" style="width:auto" /><label style="margin:0">总开关</label>
-    </div>
-
-    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
-      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-        <input type="checkbox" id="wikiEnableSwitch" style="width:auto" />
-        <label style="margin:0">启用梗百科</label>
-      </div>
-      <div id="wikiBox">
-        <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-          <input type="checkbox" id="wikiSyncEnable" style="width:auto" /><label style="margin:0">自动同步梗百科</label>
-        </div>
-        <div class="form-row">
-          <div class="field"><label>同步间隔（天）</label><input type="number" id="wikiSyncDays" min="1" max="365" /></div>
-          <div class="field"><label>每天几点检查</label><input type="time" id="wikiSyncTime" /></div>
-        </div>
-        <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
-      </div>
-    </div>
+    <div id="setBody"></div>
+    <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
     <div class="modal-foot">
       <button class="link" id="setCancel">取消</button>
       <button class="primary" id="setSave">保存</button>
@@ -498,48 +480,104 @@ $("addSave").onclick = async () => {
 };
 
 /* ---------- 设置 ---------- */
-$("settingsBtn").onclick = async () => {
-  const r = await api("kb/config", {});
-  if (r.status === "ok"){
-    const d = r.data;
-    $("providerSelect").innerHTML = `<option value="">跟随主模型</option>` +
-      (d.providers || []).map(p => `<option value="${esc(p.id)}">${esc(p.id)}</option>`).join("");
-    $("providerSelect").value = d.provider_id || "";
-    $("cfgFreq").value = d.learn_frequency;
-    $("cfgExtract").value = d.extract_max;
-    $("cfgInject").value = d.inject_max;
-  $("wikiSyncEnable").checked = !!d.wiki_sync_enable;
-  $("wikiEnableSwitch").checked = d.wiki_enable !== false;
-  $("wikiBox").style.display = $("wikiEnableSwitch").checked ? "" : "none";
-  $("wikiSyncDays").value = d.wiki_sync_interval_days ?? 7;
-  $("wikiSyncTime").value = d.wiki_sync_time || "04:30";
+let cfgFields = [], cfgValues = {};
+
+function renderSettings(d){
+  cfgFields = d.fields || [];
+  cfgValues = d.values || {};
+  const groups = [
+    { title: "基础", keys: ["enabled", "auto_learn", "listen_private", "blacklist_groups"] },
+    { title: "学习与注入", keys: ["learn_frequency", "extract_max", "inject_max",
+        "max_meaning_chars", "provider_id"] },
+    { title: "梗百科", keys: ["wiki_enable", "wiki_sync_enable",
+        "wiki_sync_interval_days", "wiki_sync_time"] },
+  ];
+  const byKey = Object.fromEntries(cfgFields.map(f => [f.key, f]));
+  const used = new Set();
+  let html = "";
+  for (const g of groups){
+    const fs = g.keys.map(k => byKey[k]).filter(Boolean);
+    if (!fs.length) continue;
+    fs.forEach(f => used.add(f.key));
+    html += `<div class="set-group"><div class="set-title">${g.title}</div>`;
+    html += fs.map(f => fieldHTML(f, cfgValues[f.key])).join("");
+    html += `</div>`;
+  }
+  const rest = cfgFields.filter(f => !used.has(f.key));
+  if (rest.length){
+    html += `<div class="set-group"><div class="set-title">其他</div>`;
+    html += rest.map(f => fieldHTML(f, cfgValues[f.key])).join("");
+    html += `</div>`;
+  }
+  $("setBody").innerHTML = html;
+
+  // 模型下拉
+  const sel = $("setBody").querySelector('[data-key="provider_id"]');
+  if (sel){
+    const cur = cfgValues.provider_id || "";
+    sel.innerHTML = `<option value="">跟随主模型</option>` +
+      (d.providers || []).map(p => `<option value="${esc(p.id)}">${esc(p.id)}${p.model ? " · " + esc(p.model) : ""}</option>`).join("");
+    sel.value = cur;
+  }
+  // 关闭梗百科时收起下面几项
+  const wikiOn = $("setBody").querySelector('[data-key="wiki_enable"]');
+  if (wikiOn){
+    const sync = () => {
+      $("setBody").querySelectorAll(".wiki-dep").forEach(el => {
+        el.style.display = wikiOn.checked ? "" : "none";
+      });
+    };
+    wikiOn.onchange = sync; sync();
+  }
   const last = d.wiki_synced_at ? new Date(Number(d.wiki_synced_at) * 1000)
     .toLocaleString("zh-CN", {hour12: false}) : "从未";
   $("wikiMeta").textContent = `梗库 ${d.wiki_count ?? 0} 条 · 上次同步 ${last}`;
+}
+
+function fieldHTML(f, value){
+  const dep = f.key.startsWith("wiki_") && f.key !== "wiki_enable" ? "wiki-dep" : "";
+  if (f.type === "bool"){
+    return `<label class="set-row ${dep}">
+      <input type="checkbox" data-key="${f.key}" ${value ? "checked" : ""} />
+      <span>${esc(f.label)}</span></label>`;
   }
+  if (f.key === "provider_id"){
+    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
+      <select data-key="provider_id"></select></div>`;
+  }
+  if (f.type === "int"){
+    const min = f.min != null ? `min="${f.min}"` : "";
+    const max = f.max != null ? `max="${f.max}"` : "";
+    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
+      <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" /></div>`;
+  }
+  return `<div class="field ${dep}"><label>${esc(f.label)}</label>
+    <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" /></div>`;
+}
+
+$("settingsBtn").onclick = async () => {
+  const r = await api("kb/config", {});
+  if (r.status !== "ok"){ toast(r.message || "读取配置失败"); return; }
+  renderSettings(r.data);
   $("setMask").classList.add("on");
 };
 $("setCancel").onclick = () => $("setMask").classList.remove("on");
-$("wikiEnableSwitch").onchange = () => {
-  $("wikiBox").style.display = $("wikiEnableSwitch").checked ? "" : "none";
-};
 $("setSave").onclick = async () => {
-  const r = await api("kb/config", {
-    provider_id: $("providerSelect").value,
-    learn_frequency: Number($("cfgFreq").value),
-    extract_max: Number($("cfgExtract").value),
-    inject_max: Number($("cfgInject").value),
-    wiki_enable: $("wikiEnableSwitch").checked,
-    wiki_sync_enable: $("wikiSyncEnable").checked,
-    wiki_sync_interval_days: Number($("wikiSyncDays").value),
-    wiki_sync_time: $("wikiSyncTime").value,
+  const payload = {};
+  $("setBody").querySelectorAll("[data-key]").forEach(el => {
+    const key = el.dataset.key;
+    const f = cfgFields.find(x => x.key === key);
+    if (!f) return;
+    payload[key] = f.type === "bool" ? el.checked
+      : f.type === "int" ? Number(el.value)
+      : el.value;
   });
+  const r = await api("kb/config", payload);
   toast(r.message || "已保存");
-  $("setMask").classList.remove("on");
-};
-$("enabledSwitch").onchange = async () => {
-  const r = await api("kb/switch", { enabled: $("enabledSwitch").checked });
-  toast(r.message);
+  if (r.status === "ok"){
+    $("setMask").classList.remove("on");
+    reload();
+  }
 };
 
 /* ---------- 搜索与快捷键 ---------- */

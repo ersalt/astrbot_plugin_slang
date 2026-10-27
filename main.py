@@ -574,70 +574,85 @@ class JargonLite(Star):
                 "message": f"已{'开启' if self.enabled else '关闭'}",
                 "data": {"enabled": self.enabled}}
 
+    @staticmethod
+    def _schema_fields() -> list[dict]:
+        """直接读 _conf_schema.json，保证设置页和后台配置同源。"""
+        try:
+            raw = json.loads((pathlib.Path(__file__).parent / "_conf_schema.json")
+                             .read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return []
+        fields = []
+        for key, spec in raw.items():
+            fields.append({
+                "key": key,
+                "label": spec.get("description", key),
+                "type": spec.get("type", "string"),
+                "default": spec.get("default"),
+                "min": spec.get("min"),
+                "max": spec.get("max"),
+            })
+        return fields
+
+    def _apply_config(self):
+        self.enabled = bool(self.config.get("enabled", True))
+        self.auto_learn = bool(self.config.get("auto_learn", True))
+        self.learn_frequency = max(5, int(self.config.get("learn_frequency", 50)))
+        self.inject_max = max(1, int(self.config.get("inject_max", 3)))
+        self.max_meaning = max(20, int(self.config.get("max_meaning_chars", 200)))
+        self.wiki_enable = bool(self.config.get("wiki_enable", True))
+        self.listen_private = bool(self.config.get("listen_private", False))
+        self.blacklist = self._parse_list(self.config.get("blacklist_groups", ""))
+        try:
+            self.miner.extract_max = max(1, int(self.config.get("extract_max", 5)))
+        except Exception:  # noqa: BLE001
+            pass
+
     async def api_config(self):
         p = await self._payload()
+        fields = self._schema_fields()
         changed = []
         if p:
-            for key, caster, lo, hi in (
-                ("learn_frequency", int, 5, 10000),
-                ("extract_max", int, 1, 100),
-                ("inject_max", int, 1, 50),
-            ):
-                if key in p:
+            for f in fields:
+                key, typ = f["key"], f["type"]
+                if key not in p:
+                    continue
+                raw = p[key]
+                if typ == "bool":
+                    self.config[key] = bool(raw)
+                elif typ == "int":
                     try:
-                        self.config[key] = max(lo, min(hi, caster(p[key])))
-                        changed.append(key)
+                        v = int(raw)
                     except (TypeError, ValueError):
                         continue
-            if "provider_id" in p:
-                self.config["provider_id"] = str(p.get("provider_id") or "").strip()
-                changed.append("provider_id")
-            if "wiki_sync_enable" in p:
-                self.config["wiki_sync_enable"] = bool(p.get("wiki_sync_enable"))
-                changed.append("wiki_sync_enable")
-            if "wiki_enable" in p:
-                self.wiki_enable = bool(p.get("wiki_enable"))
-                self.config["wiki_enable"] = self.wiki_enable
-                changed.append("wiki_enable")
-            if "wiki_sync_interval_days" in p:
-                try:
-                    self.config["wiki_sync_interval_days"] = max(
-                        1, min(365, int(p.get("wiki_sync_interval_days"))))
-                    changed.append("wiki_sync_interval_days")
-                except (TypeError, ValueError):
-                    pass
-            if "wiki_sync_time" in p:
-                raw = str(p.get("wiki_sync_time") or "").strip()
-                if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", raw):
-                    self.config["wiki_sync_time"] = raw
-                    changed.append("wiki_sync_time")
-            self.learn_frequency = max(5, int(self.config.get("learn_frequency", 50)))
-            self.inject_max = max(1, int(self.config.get("inject_max", 3)))
-            self.miner.extract_max = int(self.config.get("extract_max", 5))
-            if changed and hasattr(self.config, "save_config"):
-                try:
-                    self.config.save_config()
-                except Exception:  # noqa: BLE001
-                    pass
+                    if f.get("min") is not None:
+                        v = max(int(f["min"]), v)
+                    if f.get("max") is not None:
+                        v = min(int(f["max"]), v)
+                    self.config[key] = v
+                else:
+                    self.config[key] = str(raw if raw is not None else "").strip()
+                changed.append(key)
+            if changed:
+                self._apply_config()
+                if hasattr(self.config, "save_config"):
+                    try:
+                        self.config.save_config()
+                    except Exception:  # noqa: BLE001
+                        pass
         providers = []
         try:
             for prov in self.context.get_all_providers():
                 meta = prov.meta()
-                providers.append({"id": meta.id, "model": meta.model or "", "type": meta.type or ""})
+                providers.append({"id": meta.id, "model": meta.model or "",
+                                  "type": meta.type or ""})
         except Exception:  # noqa: BLE001
             pass
-        return {"status": "ok", "message": "已保存" if p else "", "data": {
-            "provider_id": str(self.config.get("provider_id") or ""),
-            "learn_frequency": int(self.config.get("learn_frequency", 50)),
-            "extract_max": int(self.config.get("extract_max", 5)),
-            "inject_max": int(self.config.get("inject_max", 3)),
-            "wiki_sync_enable": bool(self.config.get("wiki_sync_enable", False)),
-            "wiki_enable": self.wiki_enable,
-            "wiki_sync_interval_days": int(self.config.get("wiki_sync_interval_days", 7)),
-            "wiki_sync_time": str(self.config.get("wiki_sync_time") or "04:30"),
+        values = {f["key"]: self.config.get(f["key"], f["default"]) for f in fields}
+        return {"status": "ok", "message": "已保存" if changed else "", "data": {
+            "fields": fields, "values": values, "providers": providers,
             "wiki_count": self.store.wiki_count(),
-            "wiki_synced_at": self.store.meta_get("wiki_synced_at") or "",
-            "providers": providers}}
+            "wiki_synced_at": self.store.meta_get("wiki_synced_at") or ""}}
 
     # ---------------- 指令 ----------------
 
