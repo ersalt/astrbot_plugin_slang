@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS wiki (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_wiki_title ON wiki(title);
+CREATE INDEX IF NOT EXISTS idx_wiki_updated ON wiki(updated_at);
 CREATE TABLE IF NOT EXISTS buffer (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     umo TEXT NOT NULL,
@@ -69,6 +70,8 @@ class JargonStore:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA wal_autocheckpoint=512")
+        self._conn.execute("PRAGMA journal_size_limit=4194304")
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._migrate_from_v1()
@@ -136,6 +139,10 @@ class JargonStore:
 
     def close(self):
         with self._lock:
+            try:
+                self._conn.execute("PRAGMA optimize")
+            except Exception:
+                pass
             try:
                 self._conn.close()
             except Exception:
@@ -229,6 +236,9 @@ class JargonStore:
                 "INSERT INTO buffer(umo, sender, text, ts) VALUES(?,?,?,?)",
                 (umo, sender, text[:500], time.time()),
             )
+            # 兜底：万一学习关了/一直攒不满，别让表无限长
+            self._conn.execute(
+                "DELETE FROM buffer WHERE id <= (SELECT MAX(id) - 20000 FROM buffer)")
             self._conn.commit()
             return self._conn.execute(
                 "SELECT COUNT(*) FROM buffer WHERE umo = ?", (umo,)).fetchone()[0]
