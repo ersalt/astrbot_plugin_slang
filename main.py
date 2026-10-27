@@ -24,7 +24,7 @@ try:  # 旧版 AstrBot 无 web 模块
 except Exception:  # noqa: BLE001
     web_request = None
 
-from .matcher import format_hint, match
+from .matcher import format_hint, format_wiki, match, match_wiki
 from .miner import Miner
 from .store import JargonStore
 
@@ -56,6 +56,10 @@ class JargonLite(Star):
         self._migrate_legacy_data(data_dir)
         self.store = JargonStore(str(data_dir / "jargon.db"))
         self.miner = Miner(context, self.store, self.config)
+        try:
+            self._wiki_keys = self.store.wiki_keys()
+        except Exception:  # noqa: BLE001
+            self._wiki_keys = []
         self._locks: dict[str, asyncio.Lock] = {}
         self._learning: set[str] = set()
         self._web_registered = False
@@ -79,10 +83,15 @@ class JargonLite(Star):
 
     async def initialize(self):
         self._seed_from_file()
+        try:
+            self._wiki_keys = self.store.wiki_keys()
+        except Exception:  # noqa: BLE001
+            self._wiki_keys = []
         s = self.store.stats()
         logger.info(
             f"[slang] 已加载：共 {s['total']} 条"
-            f"（手动 {s['manual']}，自审过关 {s['auto_ok']}，待复核 {s['pending']}）")
+            f"（手动 {s['manual']}，自审过关 {s['auto_ok']}，待复核 {s['pending']}）"
+            f"，梗库 {len(self._wiki_keys)} 条")
 
     def _seed_from_file(self):
         """首次启动时从插件目录的 seed.txt 导入（key=value，一行一条）。"""
@@ -199,18 +208,30 @@ class JargonLite(Star):
         if not text:
             return
         entries = self.store.eligible(self._scope(event), self.inject_pending)
-        if not entries:
+        hits = match(entries, text, limit=self.inject_max) if entries else []
+        if hits:
+            hint = format_hint(hits, self.max_meaning,
+                               budget=self.max_meaning * self.inject_max + 120)
+            if hint:
+                sep = "\n\n" if req.system_prompt else ""
+                req.system_prompt = (req.system_prompt or "") + sep + hint
+                logger.debug(f"[slang] 注入黑话 {len(hits)} 条: "
+                             + ", ".join(h.get("name", "") for h in hits))
             return
-        hits = match(entries, text, limit=self.inject_max)
-        if not hits:
+        # 黑话没命中，再看梗库（最多 1 条，避免抢上下文）
+        if not self._wiki_keys:
             return
-        hint = format_hint(hits, self.max_meaning,
-                           budget=self.max_meaning * self.inject_max + 120)
-        if not hint:
-            return
-        req.system_prompt = (req.system_prompt or "") + "\n\n" + hint
-        logger.debug(f"[slang] 注入 {len(hits)} 条: "
-                     + ", ".join(h.get("name", "") for h in hits))
+        try:
+            titles = match_wiki(self._wiki_keys, text, limit=1)
+            if not titles:
+                return
+            hint = format_wiki(self.store.wiki_get(titles[0]))
+            if hint:
+                sep = "\n\n" if req.system_prompt else ""
+                req.system_prompt = (req.system_prompt or "") + sep + hint
+                logger.debug(f"[slang] 注入梗 {titles[0]}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[slang] 梗库注入失败: {exc}")
 
     # ---------------- WebUI 审核台 ----------------
 
@@ -351,6 +372,7 @@ class JargonLite(Star):
                 "schema": "v2" if "scope" in cols else "v1",
                 "rows": s["total"], "pending": s["pending"],
                 "enabled": self.enabled, "build": build,
+                "wiki": self.store.wiki_count(),
             }}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": f"自检失败: {exc}", "data": {}}

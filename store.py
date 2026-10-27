@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS meta (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS wiki (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL UNIQUE,
+    tags TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    usage TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_title ON wiki(title);
 CREATE TABLE IF NOT EXISTS buffer (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     umo TEXT NOT NULL,
@@ -130,6 +140,70 @@ class JargonStore:
                 self._conn.close()
             except Exception:
                 pass
+
+    # ---------- 梗库（从 memewiki 导入的快照） ----------
+
+    def wiki_replace(self, rows: list[dict]) -> int:
+        now = time.time()
+        with self._lock:
+            self._conn.execute("DELETE FROM wiki")
+            self._conn.executemany(
+                """INSERT OR REPLACE INTO wiki(title, tags, summary, usage, origin, updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                [(r["title"], r.get("tags", ""), r.get("summary", ""),
+                  r.get("usage", ""), r.get("origin", ""), now) for r in rows],
+            )
+            self._conn.commit()
+            return self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]
+
+    def wiki_upsert_many(self, rows: list[dict]) -> int:
+        with self._lock:
+            self._conn.executemany(
+                """INSERT INTO wiki(title, tags, summary, usage, origin, updated_at)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(title) DO UPDATE SET
+                     tags = excluded.tags, summary = excluded.summary,
+                     origin = excluded.origin, updated_at = excluded.updated_at""",
+                [(r["title"], r.get("tags", ""), r.get("summary", ""),
+                  r.get("usage", ""), r.get("origin", ""), r.get("updated_at") or time.time())
+                 for r in rows],
+            )
+            self._conn.commit()
+            return self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]
+
+    def wiki_clear(self) -> int:
+        with self._lock:
+            n = self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]
+            self._conn.execute("DELETE FROM wiki")
+            self._conn.commit()
+            return n
+
+    def meta_get(self, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT v FROM meta WHERE k = ?", (key,)).fetchone()
+            return row[0] if row else None
+
+    def meta_set(self, key: str, value: str):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(k, v) VALUES(?, ?)", (key, value))
+            self._conn.commit()
+
+    def wiki_keys(self) -> list[tuple[str, str]]:
+        with self._lock:
+            return [(r[0], r[1]) for r in
+                    self._conn.execute("SELECT title, tags FROM wiki")]
+
+    def wiki_get(self, title: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM wiki WHERE title = ?", (title,)).fetchone()
+            return dict(row) if row else None
+
+    def wiki_count(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]
 
     # ---------- 消息缓冲 ----------
 

@@ -101,3 +101,24 @@ SELECT id,name,meaning,scope,source,count,review_auto,review_manual FROM jargon 
 - 关键词是子串匹配，`文锋` 这种半截词需要在 `aliases` 里补；
 - 自审质量取决于提取用的模型，26B 偶尔会把普通词当黑话，这就是待复核队列存在的意义；
 - 每条含义最多 200 字、单次最多 3 条，是给小模型定的硬上限，嫌少自己调配置。
+
+## 梗库（梗Wiki 公开 API）
+
+黑话没命中时，从 `wiki` 表兜底注入 1 条梗，只给一句用法，结尾带来源「梗Wiki」。
+
+数据来自 [梗Wiki 开发者 API](https://cnmeme.wiki/developers/api)：只读公开词条，**无需登录或 API Key**。
+
+```bash
+python tools/sync_memes.py                # 增量（按 updated_at 水位）
+python tools/sync_memes.py --full         # 全量重拉
+python tools/sync_memes.py --max-pages 2  # 试水
+```
+
+接口约束（照文档执行）：
+
+- `limit` 最大 30，按更新时间倒序，用 `has_more` 翻页
+- 搜索缓存 60 秒、详情 120 秒，支持 ETag / 304
+- 429 要遵守 `Retry-After`；文档明确要求「限制并发、不要密集轮询」，脚本默认 0.5 秒一页
+- 内容使用时保留来源
+
+`wiki` 表只存 `title` / `tags` / `summary` / `usage` / `origin` / `updated_at`。匹配**只认标题**，不认 tags——tags 里全是「表情包」「天天」这类分类词，拿去匹配会疯狂误命中。
