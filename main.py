@@ -439,7 +439,9 @@ class JargonLite(Star):
         g_total, _ = bucket(lambda r: not r["scope"])
         m_total, m_subs = bucket(lambda r: r["source"] == "manual")
         c_total, c_subs = bucket(lambda r: bool(r["scope"]))
-        p_total, p_subs = bucket(lambda r: not r["review_manual"])
+        p_total = self.store.pending_count()
+        p_subs = [{"scope": s["scope"], "name": names.get(s["scope"], ""),
+                   "count": s["count"]} for s in self.store.pending_scopes()]
         buckets = [
             {"key": "global", "label": "全局黑话", "count": g_total, "subs": []},
             {"key": "manual", "label": "手动黑话", "count": m_total, "subs": m_subs},
@@ -458,6 +460,25 @@ class JargonLite(Star):
         search = str(p.get("search") or "").strip()
         kind = p.get("kind") if p.get("kind") in ("all", "pending", "auto", "manual") else "all"
         bucket = str(p.get("bucket") or "")
+        if bucket == "pending":
+            try:
+                ppage = max(1, int(p.get("page") or 1))
+                psize = min(200, max(1, int(p.get("size") or 50)))
+            except (TypeError, ValueError):
+                ppage, psize = 1, 50
+            ptotal, prows = self.store.pending_query(search, ppage, psize)
+            items = [{
+                "id": f"p{r['id']}", "content": r["name"], "meaning": r["meaning"],
+                "count": r["count"], "is_global": r["scope"] == "",
+                "manual_review": 0, "auto_review": r["review_auto"],
+                "auto_note": r["auto_note"], "source": "pending",
+                "scope": r["scope"], "pending": True,
+                "evidence": self._json_list(r["evidence"]),
+                "updated_at": r["updated_at"],
+            } for r in prows]
+            return {"status": "ok", "message": "", "data": {
+                "enabled": self.enabled, "stats": self._stats_web(),
+                "total": ptotal, "page": ppage, "size": psize, "items": items}}
         if bucket == "wiki":
             if not self.wiki_enable:
                 return {"status": "ok", "message": "", "data": {
@@ -465,7 +486,7 @@ class JargonLite(Star):
                     "total": 0, "page": 1, "size": 50, "items": []}}
             try:
                 wpage = max(1, int(p.get("page") or 1))
-                wsize = min(100, max(1, int(p.get("size") or 50)))
+                wsize = min(200, max(1, int(p.get("size") or 50)))
             except (TypeError, ValueError):
                 wpage, wsize = 1, 50
             wtotal, wrows = self.store.wiki_query(search, wpage, wsize)
@@ -490,8 +511,6 @@ class JargonLite(Star):
             rows = [r for r in rows if r["source"] == "manual"]
         elif bucket == "group":
             rows = [r for r in rows if r["scope"]]
-        elif bucket == "pending":
-            rows = [r for r in rows if not r["review_manual"]]
         scope = str(p.get("scope") or "").strip()
         if scope:
             rows = [r for r in rows if r["scope"] == scope]
@@ -525,18 +544,24 @@ class JargonLite(Star):
         meaning = str(p.get("meaning") or "").strip()
         if not content or not meaning:
             return {"status": "error", "message": "词条和含义都不能为空", "data": {}}
+        scope = None
+        if "scope" in p:
+            scope = str(p.get("scope") or "").strip()
+            if scope == "__global__":
+                scope = ""
+        if self.store.pending_get(content):
+            rec = self.store.pending_update(content, name or None, meaning[:500], scope)
+            return {"status": "ok" if rec else "error",
+                    "message": f"「{name or content}」已更新（待审）" if rec else "改不成，可能重名",
+                    "data": {}}
         target = content
         if name and name != content:
             rec = self.store.update_name(content, name)
             if not rec:
                 return {"status": "error", "message": f"改不成「{name}」，可能重名", "data": {}}
             target = name
-        if "scope" in p:
-            scope = str(p.get("scope") or "").strip()
-            if scope == "__global__":
-                scope = ""
-            if self.store.set_scope(target, scope) is None:
-                return {"status": "error", "message": "改归属失败，可能重名", "data": {}}
+        if scope is not None and self.store.set_scope(target, scope) is None:
+            return {"status": "error", "message": "改归属失败，可能重名", "data": {}}
         rec = self.store.update_meaning(target, meaning[:500])
         return {"status": "ok" if rec else "error",
                 "message": f"「{target}」已更新" if rec else f"没找到「{target}」",
@@ -547,6 +572,8 @@ class JargonLite(Star):
         content = str(p.get("content") or "").strip()
         if not content:
             return {"status": "error", "message": "缺少词条", "data": {}}
+        if self.store.pending_delete(content):
+            return {"status": "ok", "message": f"已从待审删掉「{content}」", "data": {}}
         ok = self.store.delete(content)
         return {"status": "ok" if ok else "error",
                 "message": f"已删除「{content}」" if ok else f"没找到「{content}」", "data": {}}
@@ -557,6 +584,11 @@ class JargonLite(Star):
         if not content:
             return {"status": "error", "message": "缺少词条", "data": {}}
         value = bool(p.get("value", True))
+        if value and self.store.pending_get(content):
+            rec = self.store.pending_approve(content)
+            return {"status": "ok" if rec else "error",
+                    "message": f"「{content}」已通过，移入黑话库" if rec else "移动失败",
+                    "data": {}}
         rec = self.store.set_review(content, manual=value)
         if not rec:
             return {"status": "error", "message": f"没找到「{content}」", "data": {}}
@@ -570,13 +602,15 @@ class JargonLite(Star):
         value = bool(p.get("value"))
         if not content or field not in ("manual", "auto"):
             return {"status": "error", "message": "参数不对", "data": {}}
-        rec = (self.store.set_review(content, manual=value) if field == "manual"
-               else self.store.set_review(content, auto=value))
+        if field == "auto" and self.store.pending_get(content):
+            rec = self.store.pending_set_review(content, value)
+        else:
+            rec = self.store.set_review(content, auto=value)
         if not rec:
             return {"status": "error", "message": f"没找到「{content}」", "data": {}}
-        label = "人工通过" if field == "manual" else "自审过关"
         return {"status": "ok",
-                "message": f"「{content}」已{'标记' if value else '取消'}{label}", "data": {}}
+                "message": f"「{content}」已{'标记' if value else '取消'}自审过关",
+                "data": {}}
 
     async def api_toggle_global(self):
         p = await self._payload()
@@ -712,11 +746,16 @@ class JargonLite(Star):
     @kb.command("pending")
     async def kb_pending(self, event: AstrMessageEvent):
         """列出还没人工通过、等着你复核的条目。"""
-        total, rows = self.store.query("pending", size=10)
+        total, rows = self.store.pending_query(size=10)
         if not rows:
             yield event.plain_result("没有待复核的条目。")
             return
-        lines = [f"待复核 {total} 条（前 10）："] + [self._fmt(r) for r in rows]
+        items = []
+        for r in rows:
+            scope = "全局" if not r["scope"] else f"群{r['scope']}"
+            items.append(f"#{r['id']} {r['name']}：{r['meaning'][:40]} "
+                         f"[{'自审✅' if r['review_auto'] else '自审✗'} {scope} ×{r['count']}]")
+        lines = [f"待复核 {total} 条（前 10）："] + items
         lines.append("用 /kb approve 名称 或 /kb del 名称 处理")
         yield event.plain_result("\n".join(lines))
 

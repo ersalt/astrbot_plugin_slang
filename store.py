@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS buffer (
     ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_buffer_umo ON buffer(umo, ts);
+CREATE TABLE IF NOT EXISTS pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    aliases TEXT NOT NULL DEFAULT '',
+    meaning TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'ai',
+    count INTEGER NOT NULL DEFAULT 1,
+    review_auto INTEGER NOT NULL DEFAULT 0,
+    auto_note TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE(name, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_scope ON pending(scope);
 """
 
 MAX_EVIDENCE = 3
@@ -75,6 +91,7 @@ class JargonStore:
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._migrate_from_v1()
+            self._split_pending()
             self._conn.execute("DELETE FROM buffer WHERE ts < ?", (time.time() - 7 * 86400,))
             self._conn.commit()
 
@@ -147,6 +164,181 @@ class JargonStore:
                 self._conn.close()
             except Exception:
                 pass
+
+    def _split_pending(self):
+        """一次性把未人工通过的词条搬进 pending 表（待审与已审物理隔离）。"""
+        try:
+            if self._conn.execute(
+                    "SELECT v FROM meta WHERE k = 'pending_split'").fetchone():
+                return
+            rows = [dict(r) for r in self._conn.execute(
+                "SELECT * FROM jargon WHERE review_manual = 0")]
+            for r in rows:
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO pending(name, aliases, meaning, scope, source,
+                       count, review_auto, auto_note, evidence, created_at, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (r["name"], r["aliases"], r["meaning"], r["scope"], r["source"],
+                     r["count"], r["review_auto"], r["auto_note"], r["evidence"],
+                     r["created_at"], r["updated_at"]))
+            self._conn.execute("DELETE FROM jargon WHERE review_manual = 0")
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(k, v) VALUES('pending_split', '1')")
+            self._conn.commit()
+        except Exception:
+            pass
+
+    # ---------- 待审（独立表，永不参与注入） ----------
+
+    def pending_add(self, name: str, meaning: str, scope: str = "",
+                    aliases: str = "", evidence: str = "",
+                    auto_review: bool = False, auto_note: str = "") -> dict:
+        name = (name or "").strip()[:32]
+        meaning = (meaning or "").strip()[:1000]
+        if not name or not meaning:
+            return {}
+        if self._conn.execute(
+                "SELECT 1 FROM jargon WHERE name = ? AND scope = ? AND review_manual = 1",
+                (name, scope)).fetchone():
+            return {}
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM pending WHERE name = ? AND scope = ?",
+                (name, scope)).fetchone()
+            if row:
+                rec = dict(row)
+                self._conn.execute(
+                    """UPDATE pending SET meaning = ?, aliases = ?, count = count + 1,
+                       review_auto = MAX(review_auto, ?), auto_note = ?, evidence = ?,
+                       updated_at = ? WHERE id = ?""",
+                    (meaning, aliases, int(auto_review), auto_note,
+                     self._merge_evidence(rec["evidence"], evidence), now, rec["id"]))
+            else:
+                self._conn.execute(
+                    """INSERT INTO pending(name, aliases, meaning, scope, source, count,
+                       review_auto, auto_note, evidence, created_at, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (name, aliases, meaning, scope, "ai", 1, int(auto_review),
+                     auto_note, self._pack_evidence(evidence), now, now))
+            self._conn.commit()
+        return self.pending_get(name) or {}
+
+    def pending_get(self, key: str) -> dict | None:
+        with self._lock:
+            if str(key).isdigit():
+                row = self._conn.execute(
+                    "SELECT * FROM pending WHERE id = ?", (int(key),)).fetchone()
+                if row:
+                    return dict(row)
+            row = self._conn.execute(
+                "SELECT * FROM pending WHERE name = ? ORDER BY updated_at DESC LIMIT 1",
+                (str(key),)).fetchone()
+            return dict(row) if row else None
+
+    def pending_count(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
+
+    def pending_scopes(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT scope, COUNT(*) n FROM pending GROUP BY scope").fetchall()
+            return [{"scope": r[0] or "", "count": r[1]} for r in rows]
+
+    def pending_query(self, search: str = "", page: int = 1,
+                      size: int = 50) -> tuple[int, list[dict]]:
+        where, params = "", []
+        if search:
+            where = "WHERE name LIKE ? OR meaning LIKE ?"
+            like = f"%{search}%"
+            params = [like, like]
+        with self._lock:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) FROM pending {where}", params).fetchone()[0]
+            rows = self._conn.execute(
+                f"""SELECT * FROM pending {where}
+                    ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                (*params, size, (page - 1) * size)).fetchall()
+            return total, [dict(r) for r in rows]
+
+    def pending_set_review(self, key: str, auto: bool) -> dict | None:
+        rec = self.pending_get(key)
+        if not rec:
+            return None
+        with self._lock:
+            self._conn.execute(
+                "UPDATE pending SET review_auto = ?, updated_at = ? WHERE id = ?",
+                (int(auto), time.time(), rec["id"]))
+            self._conn.commit()
+        return self.pending_get(str(rec["id"]))
+
+    def pending_update(self, key: str, name: str | None = None,
+                       meaning: str | None = None, scope: str | None = None) -> dict | None:
+        rec = self.pending_get(key)
+        if not rec:
+            return None
+        sets, params = [], []
+        if name and name != rec["name"]:
+            sets.append("name = ?")
+            params.append(name[:32])
+        if meaning:
+            sets.append("meaning = ?")
+            params.append(meaning[:1000])
+        if scope is not None:
+            sets.append("scope = ?")
+            params.append(scope)
+        if not sets:
+            return rec
+        params.extend([time.time(), rec["id"]])
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE pending SET {', '.join(sets)}, updated_at = ? WHERE id = ?",
+                    params)
+                self._conn.commit()
+            except sqlite3.IntegrityError:
+                return None
+        return self.pending_get(str(rec["id"]))
+
+    def pending_delete(self, key: str) -> bool:
+        rec = self.pending_get(key)
+        if not rec:
+            return False
+        with self._lock:
+            self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
+            self._conn.commit()
+        return True
+
+    def pending_approve(self, key: str) -> dict | None:
+        """通过：从 pending 搬到 jargon，并标记人工通过。"""
+        rec = self.pending_get(key)
+        if not rec:
+            return None
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM jargon WHERE name = ? AND scope = ?",
+                (rec["name"], rec["scope"])).fetchone()
+            if row:
+                cur = dict(row)
+                self._conn.execute(
+                    """UPDATE jargon SET count = count + ?, meaning = ?,
+                       review_manual = 1, review_auto = MAX(review_auto, ?),
+                       evidence = ?, updated_at = ? WHERE id = ?""",
+                    (rec["count"], rec["meaning"], rec["review_auto"],
+                     self._merge_evidence(cur["evidence"], ""), now, cur["id"]))
+            else:
+                self._conn.execute(
+                    """INSERT INTO jargon(name, aliases, meaning, scope, source, count,
+                       review_manual, review_auto, auto_note, evidence, created_at, updated_at)
+                       VALUES(?,?,?,?,?,?,1,?,?,?,?,?)""",
+                    (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
+                     "ai", rec["count"], rec["review_auto"], rec["auto_note"],
+                     rec["evidence"], rec["created_at"], now))
+            self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
+            self._conn.commit()
+        return self.get(rec["name"])
 
     # ---------- 梗库（从 memewiki 导入的快照） ----------
 
@@ -476,8 +668,7 @@ class JargonStore:
     def stats(self) -> dict:
         with self._lock:
             total = self._conn.execute("SELECT COUNT(*) FROM jargon").fetchone()[0]
-            pending = self._conn.execute(
-                "SELECT COUNT(*) FROM jargon WHERE review_manual = 0 AND review_auto = 0").fetchone()[0]
+            pending = self._conn.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
             auto_ok = self._conn.execute(
                 "SELECT COUNT(*) FROM jargon WHERE review_auto = 1 AND review_manual = 0").fetchone()[0]
             manual = self._conn.execute(

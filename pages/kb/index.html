@@ -78,6 +78,11 @@ body{background:var(--bg);color:var(--text);
 .btn.danger:hover{background:#ffe5e2}
 .btn.danger.armed{background:var(--danger);border-color:var(--danger);color:#fff}
 .empty{color:var(--muted);text-align:center;padding:64px 0}
+.pager{display:flex;align-items:center;justify-content:center;gap:14px;
+  margin-top:14px;font-size:13px;color:var(--muted)}
+.pager button{border:1px solid var(--line);background:#fff;border-radius:8px;
+  padding:5px 12px;cursor:pointer;font:inherit;font-size:13px}
+.pager button:disabled{opacity:.4;cursor:default}
 
 input,select,textarea,button{font:inherit;color:var(--text);background:#fff;
   border:1px solid var(--line);border-radius:9px;padding:6px 10px}
@@ -134,6 +139,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
       <button class="primary" id="addBtn">+ 手动录入</button>
     </div>
     <div id="list"></div>
+    <div class="pager" id="pager" style="display:none"></div>
   </main>
 </div>
 
@@ -213,7 +219,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 const PLUGIN = "astrbot_plugin_slang";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", search: "", tree: null,
-  cache: new Map(), collapsed: new Set() };
+  cache: new Map(), collapsed: new Set(), page: 1, size: 50 };
 
 function toast(msg){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -330,8 +336,8 @@ function entryHTML(it){
       <div class="meta">${meta}</div>
     </div>
     <div class="ops">
+      ${it.pending ? `<button class="btn" data-act="manual">通过</button>` : `<button class="btn ${isManual ? "on" : "off"}" data-act="manual">人工 ${isManual ? "✓" : "✗"}</button>`}
       <button class="btn ${isAuto ? "on" : "off"}" data-act="auto">自审 ${isAuto ? "✓" : "✗"}</button>
-      <button class="btn ${isManual ? "on" : "off"}" data-act="manual">人工 ${isManual ? "✓" : "✗"}</button>
       <button class="btn" data-act="edit">修改</button>
       <button class="btn danger" data-act="del">删除</button>
     </div>
@@ -346,7 +352,8 @@ async function loadTree(){
 }
 
 async function loadList(){
-  const r = await api("kb/list", { bucket: state.bucket, scope: state.scope, search: state.search, size: 200 });
+  const r = await api("kb/list", { bucket: state.bucket, scope: state.scope,
+    search: state.search, page: state.page, size: state.size });
   if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   const d = r.data;
   state.cache.clear();
@@ -356,6 +363,19 @@ async function loadList(){
   $("list").innerHTML = (d.items || []).length
     ? d.items.map(entryHTML).join("")
     : `<div class="empty">这里还没有词条</div>`;
+  renderPager(d.total, d.page || state.page, d.size || state.size);
+}
+
+function renderPager(total, page, size){
+  const box = $("pager");
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (total <= size){ box.style.display = "none"; return; }
+  box.style.display = "flex";
+  box.innerHTML = `<button id="pgPrev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 ${page} / ${pages} 页 · 共 ${total} 条</span>
+    <button id="pgNext" ${page >= pages ? "disabled" : ""}>下一页</button>`;
+  $("pgPrev").onclick = () => { if (page > 1){ state.page = page - 1; loadList(); } };
+  $("pgNext").onclick = () => { if (page < pages){ state.page = page + 1; loadList(); } };
 }
 
 async function ping(){
@@ -408,6 +428,7 @@ $("nav").addEventListener("click", e => {
     state.collapsed.delete(key);
   }
   state.search = ""; $("searchInput").value = "";
+  state.page = 1;
   renderNav(); loadList();
 });
 
@@ -535,7 +556,11 @@ $("enabledSwitch").onchange = async () => {
 let searchTimer;
 $("searchInput").oninput = () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.search = $("searchInput").value.trim(); loadList(); }, 300);
+  searchTimer = setTimeout(() => {
+    state.search = $("searchInput").value.trim();
+    state.page = 1;
+    loadList();
+  }, 300);
 };
 document.addEventListener("keydown", e => {
   if (e.key === "/" && document.activeElement !== $("searchInput")){
