@@ -62,6 +62,8 @@ class JargonLite(Star):
             self._wiki_keys = []
         self._locks: dict[str, asyncio.Lock] = {}
         self._learning: set[str] = set()
+        self._wiki_task = None
+        self._wiki_running = False
         self._web_registered = False
         self._register_web_api()
 
@@ -92,6 +94,40 @@ class JargonLite(Star):
             f"[slang] 已加载：共 {s['total']} 条"
             f"（手动 {s['manual']}，自审过关 {s['auto_ok']}，待复核 {s['pending']}）"
             f"，梗库 {len(self._wiki_keys)} 条")
+        self._wiki_task = asyncio.create_task(self._wiki_loop())
+
+    async def _wiki_loop(self):
+        while True:
+            try:
+                await self._maybe_sync_wiki()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[slang] 梗库定时任务异常: {exc}")
+            await asyncio.sleep(60)
+
+    async def _maybe_sync_wiki(self):
+        if not self.config.get("wiki_sync_enable", False) or self._wiki_running:
+            return
+        hhmm = str(self.config.get("wiki_sync_time") or "04:30")
+        if time.strftime("%H:%M") != hhmm:
+            return
+        try:
+            interval = max(1, int(self.config.get("wiki_sync_interval_days", 7) or 7))
+        except (TypeError, ValueError):
+            interval = 7
+        last = float(self.store.meta_get("wiki_synced_at") or 0)
+        if last and time.time() - last < interval * 86400:
+            return
+        self._wiki_running = True
+        try:
+            from .wikinow import sync as sync_wiki
+            res = await asyncio.to_thread(
+                sync_wiki, self.store, 30, 0.5, 0, False, logger.info)
+            self._wiki_keys = self.store.wiki_keys()
+            logger.info(f"[slang] 梗库自动同步完成: {res}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[slang] 梗库自动同步失败: {exc}")
+        finally:
+            self._wiki_running = False
 
     def _seed_from_file(self):
         """首次启动时从插件目录的 seed.txt 导入（key=value，一行一条）。"""
@@ -115,6 +151,11 @@ class JargonLite(Star):
             logger.warning(f"[slang] seed 导入失败: {exc}")
 
     async def terminate(self):
+        try:
+            if self._wiki_task:
+                self._wiki_task.cancel()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.store.close()
         except Exception:  # noqa: BLE001
@@ -394,6 +435,7 @@ class JargonLite(Star):
         m_total, m_subs = bucket(lambda r: r["source"] == "manual")
         c_total, c_subs = bucket(lambda r: bool(r["scope"]))
         p_total, p_subs = bucket(lambda r: not r["review_manual"])
+        w_total = self.store.wiki_count()
         return {"status": "ok", "message": "", "data": {
             "total": len(rows),
             "buckets": [
@@ -401,6 +443,8 @@ class JargonLite(Star):
                 {"key": "manual", "label": "手动黑话", "count": m_total, "subs": m_subs},
                 {"key": "group", "label": "群黑话", "count": c_total, "subs": c_subs},
                 {"key": "pending", "label": "待审黑话", "count": p_total, "subs": p_subs},
+                {"key": "wiki", "label": "梗百科", "count": w_total, "subs": [],
+                 "readonly": True},
             ],
         }}
 
@@ -409,6 +453,22 @@ class JargonLite(Star):
         search = str(p.get("search") or "").strip()
         kind = p.get("kind") if p.get("kind") in ("all", "pending", "auto", "manual") else "all"
         bucket = str(p.get("bucket") or "")
+        if bucket == "wiki":
+            try:
+                wpage = max(1, int(p.get("page") or 1))
+                wsize = min(100, max(1, int(p.get("size") or 50)))
+            except (TypeError, ValueError):
+                wpage, wsize = 1, 50
+            wtotal, wrows = self.store.wiki_query(search, wpage, wsize)
+            items = [{
+                "id": f"w{r['id']}", "content": r["title"], "meaning": r["summary"],
+                "count": 0, "is_global": True, "review_manual": 0, "review_auto": 0,
+                "auto_note": "", "source": "wiki", "scope": "", "read_only": True,
+                "tags": r["tags"], "evidence": [], "updated_at": r["updated_at"],
+            } for r in wrows]
+            return {"status": "ok", "message": "", "data": {
+                "enabled": self.enabled, "stats": self._stats_web(),
+                "total": wtotal, "page": wpage, "size": wsize, "items": items}}
         try:
             page = max(1, int(p.get("page") or 1))
             size = min(200, max(1, int(p.get("size") or 50)))
@@ -554,6 +614,21 @@ class JargonLite(Star):
             if "provider_id" in p:
                 self.config["provider_id"] = str(p.get("provider_id") or "").strip()
                 changed.append("provider_id")
+            if "wiki_sync_enable" in p:
+                self.config["wiki_sync_enable"] = bool(p.get("wiki_sync_enable"))
+                changed.append("wiki_sync_enable")
+            if "wiki_sync_interval_days" in p:
+                try:
+                    self.config["wiki_sync_interval_days"] = max(
+                        1, min(365, int(p.get("wiki_sync_interval_days"))))
+                    changed.append("wiki_sync_interval_days")
+                except (TypeError, ValueError):
+                    pass
+            if "wiki_sync_time" in p:
+                raw = str(p.get("wiki_sync_time") or "").strip()
+                if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", raw):
+                    self.config["wiki_sync_time"] = raw
+                    changed.append("wiki_sync_time")
             self.learn_frequency = max(5, int(self.config.get("learn_frequency", 50)))
             self.inject_max = max(1, int(self.config.get("inject_max", 3)))
             self.miner.extract_max = int(self.config.get("extract_max", 5))
@@ -574,6 +649,11 @@ class JargonLite(Star):
             "learn_frequency": int(self.config.get("learn_frequency", 50)),
             "extract_max": int(self.config.get("extract_max", 5)),
             "inject_max": int(self.config.get("inject_max", 3)),
+            "wiki_sync_enable": bool(self.config.get("wiki_sync_enable", False)),
+            "wiki_sync_interval_days": int(self.config.get("wiki_sync_interval_days", 7)),
+            "wiki_sync_time": str(self.config.get("wiki_sync_time") or "04:30"),
+            "wiki_count": self.store.wiki_count(),
+            "wiki_synced_at": self.store.meta_get("wiki_synced_at") or "",
             "providers": providers}}
 
     # ---------------- 指令 ----------------

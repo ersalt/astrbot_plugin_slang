@@ -201,6 +201,22 @@ class JargonStore:
                 "SELECT * FROM wiki WHERE title = ?", (title,)).fetchone()
             return dict(row) if row else None
 
+    def wiki_query(self, search: str = "", page: int = 1,
+                   size: int = 30) -> tuple[int, list[dict]]:
+        where, params = "", []
+        if search:
+            where = "WHERE title LIKE ? OR summary LIKE ?"
+            like = f"%{search}%"
+            params = [like, like]
+        with self._lock:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) FROM wiki {where}", params).fetchone()[0]
+            rows = self._conn.execute(
+                f"""SELECT * FROM wiki {where}
+                    ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                (*params, size, (page - 1) * size)).fetchall()
+            return total, [dict(r) for r in rows]
+
     def wiki_count(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]
