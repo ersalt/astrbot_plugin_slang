@@ -126,21 +126,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 | `pending` | 待审草稿，字段同上 |
 | `wiki` | 梗快照：title / tags / summary / updated_at |
 | `buffer` | 待学消息，按 umo 分组，启动清 7 天前，超过 2 万行自动截断 |
-| `meta` | schema_version、wiki_synced_at |
-
-当前结构版本 **v4**。启动时按顺序自动迁移 v1 → v2 → v3 → v4，每次迁移前备份：
-
-```
-jargon.db.v1.bak   jargon.db.v2.bak   jargon.db.v3.bak
-```
-
-迁移会重建表（SQLite 删列只能重建），文件会临时变大，跑一次维护回收：
-
-```bash
-python tools/db_maintain.py --db <数据目录>/jargon.db
-```
-
-做 `VACUUM + ANALYZE`。实测 v4 迁移后 6.62MB → 3.46MB。
+| `meta` | wiki_synced_at（上次同步水位） |
 
 ## 已知限制
 

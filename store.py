@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: MIT
-"""SQLite 存储层 v3。
+"""SQLite 存储层。
 
 模型：
 - jargon   = 已过审的词条（会注入）
@@ -9,11 +9,9 @@
 - 作用域 scope：'' = 全局，否则群号
 - 来源 source：manual / ai
 
-v2 -> v3 迁移：把 review_manual=1 的留在 jargon，其余搬进 pending，并删掉两个审核列。
 """
 
 import json
-import shutil
 import sqlite3
 import threading
 import time
@@ -75,17 +73,6 @@ CREATE INDEX IF NOT EXISTS idx_buffer_umo ON buffer(umo, ts);
 
 MAX_EVIDENCE = 3
 
-INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_jargon_scope ON jargon(scope);
-CREATE INDEX IF NOT EXISTS idx_jargon_updated ON jargon(updated_at);
-CREATE INDEX IF NOT EXISTS idx_jargon_name ON jargon(name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_jargon_source ON jargon(source, updated_at);
-CREATE INDEX IF NOT EXISTS idx_pending_scope ON pending(scope);
-CREATE INDEX IF NOT EXISTS idx_pending_updated ON pending(updated_at);
-CREATE INDEX IF NOT EXISTS idx_wiki_title ON wiki(title);
-CREATE INDEX IF NOT EXISTS idx_wiki_updated ON wiki(updated_at);
-CREATE INDEX IF NOT EXISTS idx_buffer_umo ON buffer(umo, ts);
-"""
 
 
 class JargonStore:
@@ -99,130 +86,9 @@ class JargonStore:
         self._conn.execute("PRAGMA journal_size_limit=4194304")
         with self._lock:
             self._conn.executescript(SCHEMA)
-            self._migrate_from_v1()
-            self._migrate_v2_to_v3()
-            self._migrate_v3_to_v4()
             self._conn.execute("DELETE FROM buffer WHERE ts < ?",
                                (time.time() - 7 * 86400,))
             self._conn.commit()
-
-    # ---------------- 迁移 ----------------
-
-    def _cols(self, table: str) -> set[str]:
-        return {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
-
-    def _migrate_from_v1(self):
-        cols = self._cols("jargon")
-        if "category" not in cols:
-            return
-        # v1 先按老规则并进 v2 结构，再由 v2->v3 收尾
-        try:
-            shutil.copy2(self.db_path, self.db_path + ".v1.bak")
-        except Exception:
-            pass
-        rows = [dict(r) for r in self._conn.execute("SELECT * FROM jargon")]
-        merged: dict[tuple[str, str], dict] = {}
-        for r in rows:
-            scope = "" if r.get("category") == "global" else (r.get("scope") or "")
-            key = (r["name"], scope)
-            cur = merged.get(key)
-            if cur is None:
-                r["_scope"] = scope
-                r["_source"] = "manual" if r.get("category") == "manual" else "ai"
-                merged[key] = r
-                continue
-            cur["count"] = cur.get("count", 1) + r.get("count", 1)
-            if r.get("category") == "manual" and cur["_source"] != "manual":
-                r["count"] = cur["count"]
-                r["_scope"], r["_source"] = scope, "manual"
-                merged[key] = r
-        self._conn.execute("DROP TABLE IF EXISTS jargon")
-        self._conn.executescript(SCHEMA)
-        now = time.time()
-        for (name, scope), r in merged.items():
-            self._conn.execute(
-                """INSERT INTO jargon(id, name, aliases, meaning, scope, source,
-                   count, evidence, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (r.get("id"), name, r.get("aliases") or "", r.get("meaning") or "",
-                 scope, r["_source"], r.get("count") or 1,
-                 self._pack_evidence(r.get("evidence")),
-                 r.get("created_at") or now, r.get("updated_at") or now))
-        self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','2')")
-        self._conn.commit()
-
-    def _migrate_v2_to_v3(self):
-        cols = self._cols("jargon")
-        if "review_manual" not in cols:
-            return
-        try:
-            shutil.copy2(self.db_path, self.db_path + ".v2.bak")
-        except Exception:
-            pass
-        approved = [dict(r) for r in self._conn.execute(
-            "SELECT * FROM jargon WHERE review_manual = 1")]
-        drafts = [dict(r) for r in self._conn.execute(
-            "SELECT * FROM jargon WHERE review_manual = 0")]
-        if "review_manual" in self._cols("pending"):
-            drafts += [dict(r) for r in self._conn.execute("SELECT * FROM pending")]
-
-        self._conn.execute("DROP TABLE IF EXISTS jargon")
-        self._conn.execute("DROP TABLE IF EXISTS pending")
-        self._conn.executescript(SCHEMA)
-        for r in approved:
-            self._insert_row("jargon", r)
-        for r in drafts:
-            self._insert_row("pending", r)
-        self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','3')")
-        self._conn.commit()
-
-    def _migrate_v3_to_v4(self):
-        """v4：删掉两列从来没写过的字段，并补两个索引。"""
-        jcols = self._cols("jargon")
-        wcols = self._cols("wiki")
-        if "origin_scope" not in jcols and "usage" not in wcols:
-            return
-        try:
-            shutil.copy2(self.db_path, self.db_path + ".v3.bak")
-        except Exception:
-            pass
-        jargon_rows = [dict(r) for r in self._conn.execute("SELECT * FROM jargon")]
-        wiki_rows = [dict(r) for r in self._conn.execute("SELECT * FROM wiki")]
-        self._conn.execute("ALTER TABLE jargon RENAME TO jargon_v3")
-        self._conn.execute("ALTER TABLE wiki RENAME TO wiki_v3")
-        self._conn.executescript(SCHEMA)
-        for r in jargon_rows:
-            self._conn.execute(
-                """INSERT OR IGNORE INTO jargon(id, name, aliases, meaning, scope,
-                   source, count, auto_note, evidence, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (r.get("id"), r.get("name"), r.get("aliases") or "",
-                 r.get("meaning") or "", r.get("scope") or "",
-                 r.get("source") or "ai", r.get("count") or 1,
-                 r.get("auto_note") or "", self._pack_evidence(r.get("evidence")),
-                 r.get("created_at") or time.time(),
-                 r.get("updated_at") or time.time()))
-        for r in wiki_rows:
-            self._conn.execute(
-                """INSERT OR IGNORE INTO wiki(id, title, tags, summary, updated_at)
-                   VALUES(?,?,?,?,?)""",
-                (r.get("id"), r.get("title"), r.get("tags") or "",
-                 r.get("summary") or "", r.get("updated_at") or time.time()))
-        self._conn.execute("DROP TABLE jargon_v3")
-        self._conn.execute("DROP TABLE wiki_v3")
-        self._conn.executescript(INDEXES)
-        self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','4')")
-        self._conn.commit()
-
-    def _insert_row(self, table: str, r: dict):
-        self._conn.execute(
-            f"""INSERT OR IGNORE INTO {table}(name, aliases, meaning, scope, source,
-               count, auto_note, evidence, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (r.get("name"), r.get("aliases") or "", r.get("meaning") or "",
-             r.get("scope") or "", r.get("source") or "ai", r.get("count") or 1,
-             r.get("auto_note") or "", self._pack_evidence(r.get("evidence")),
-             r.get("created_at") or time.time(), r.get("updated_at") or time.time()))
 
     @staticmethod
     def _pack_evidence(raw) -> str:

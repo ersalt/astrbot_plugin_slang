@@ -12,7 +12,6 @@ import asyncio
 import json
 import pathlib
 import re
-import shutil
 import sqlite3
 import time
 
@@ -54,7 +53,6 @@ class JargonLite(Star):
 
         data_dir = StarTools.get_data_dir("astrbot_plugin_slang")
         data_dir.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_data(data_dir)
         self.store = JargonStore(str(data_dir / "jargon.db"))
         self.miner = Miner(context, self.store, self.config)
         try:
@@ -67,22 +65,6 @@ class JargonLite(Star):
         self._wiki_running = False
         self._web_registered = False
         self._register_web_api()
-
-    @staticmethod
-    def _migrate_legacy_data(data_dir: pathlib.Path):
-        """改名后首次启动：把旧模块名的数据库搬过来。"""
-        try:
-            old = data_dir.parent / "astrbot_plugin_jargon_lite"
-            target = data_dir / "jargon.db"
-            if target.exists() or not old.is_dir():
-                return
-            for suffix in ("", "-wal", "-shm"):
-                src = old / f"jargon.db{suffix}"
-                if src.exists():
-                    shutil.copy2(src, data_dir / f"jargon.db{suffix}")
-            logger.info("[slang] 已从旧数据目录迁移 jargon.db")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[slang] 旧数据迁移失败: {exc}")
 
     async def initialize(self):
         self._seed_from_file()
@@ -418,7 +400,7 @@ class JargonLite(Star):
                 time.localtime(pathlib.Path(__file__).stat().st_mtime))
             return {"status": "ok", "message": "", "data": {
                 "plugin": "astrbot_plugin_slang",
-                "schema": "v" + (self.store.meta_get("schema_version") or "?"),
+                "schema": "1.0",
                 "rows": s["total"], "pending": s["pending"],
                 "enabled": self.enabled, "build": build,
                 "wiki": self.store.wiki_count(),

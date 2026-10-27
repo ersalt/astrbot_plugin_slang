@@ -361,7 +361,7 @@ async function ping(){
     const r = await api("kb/ping", {});
     if (r.status === "ok"){
       $("diag").textContent =
-        `自检 ok · ${r.data.rows} 条 · ${r.data.schema} · 梗库 ${r.data.wiki ?? 0} · build ${r.data.build || "?"}`;
+        `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · build ${r.data.build || "?"}`;
     } else {
       $("diag").textContent = "自检失败：" + (r.message || "");
     }
