@@ -5,3 +5,13 @@ desc: 群黑话自动学习与注入：LLM 提取 + 模型自审 + 待审复核�
 version: 1.0.0
 author: 贰叔
 repo: https://github.com/ersalt/astrbot_plugin_slang
+astrbot_version: ">=4.11.0"
+support_platforms:
+  - aiocqhttp
+tags:
+  - 黑话
+  - 词库
+  - 群聊
+  - 学习
+  - 梗
+social_link: https://github.com/ersalt

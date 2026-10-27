@@ -67,7 +67,6 @@ class JargonLite(Star):
         self._register_web_api()
 
     async def initialize(self):
-        self._seed_from_file()
         try:
             self._wiki_keys = self.store.wiki_keys()
         except Exception:  # noqa: BLE001
@@ -113,27 +112,6 @@ class JargonLite(Star):
             logger.error(f"[slang] 梗库自动同步失败: {exc}")
         finally:
             self._wiki_running = False
-
-    def _seed_from_file(self):
-        """首次启动时从插件目录的 seed.txt 导入（key=value，一行一条）。"""
-        try:
-            if self.store.stats()["total"] > 0:
-                return
-            path = pathlib.Path(__file__).parent / "seed.txt"
-            if not path.exists():
-                return
-            n = 0
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or "=" not in line or line.startswith("#"):
-                    continue
-                name, meaning = line.split("=", 1)
-                if name.strip() and meaning.strip():
-                    self.store.add_manual(name.strip(), meaning.strip(), scope="")
-                    n += 1
-            logger.info(f"[slang] 从 seed.txt 导入 {n} 条")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[slang] seed 导入失败: {exc}")
 
     async def terminate(self):
         try:
