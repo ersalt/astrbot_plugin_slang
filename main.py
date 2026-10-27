@@ -222,6 +222,7 @@ class JargonLite(Star):
         prefix = "/astrbot_plugin_slang/kb"
         routes = [
             ("list", self.api_list, ["GET", "POST"], "词条列表"),
+            ("ping", self.api_ping, ["GET", "POST"], "连通性自检"),
             ("groups", self.api_groups, ["GET", "POST"], "群列表"),
             ("tree", self.api_tree, ["GET", "POST"], "侧栏树"),
             ("add", self.api_add, ["POST"], "手动录入"),
@@ -336,6 +337,20 @@ class JargonLite(Star):
                 for s, n in counts.items()]
         data.sort(key=lambda x: -x["count"])
         return {"status": "ok", "message": "", "data": {"groups": data}}
+
+    async def api_ping(self):
+        """页面自检：确认路由与数据库是否正常。"""
+        try:
+            s = self.store.stats()
+            cols = [r[1] for r in self.store._conn.execute("PRAGMA table_info(jargon)")]
+            return {"status": "ok", "message": "", "data": {
+                "plugin": "astrbot_plugin_slang",
+                "schema": "v2" if "scope" in cols else "v1",
+                "rows": s["total"], "pending": s["pending"],
+                "enabled": self.enabled,
+            }}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": f"自检失败: {exc}", "data": {}}
 
     async def api_tree(self):
         _, rows = self.store.query("all", size=3000)

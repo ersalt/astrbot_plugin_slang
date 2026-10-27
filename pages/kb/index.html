@@ -117,7 +117,10 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   <aside class="card side">
     <h1>黑话库<small>astrbot_plugin_slang</small></h1>
     <div id="nav"></div>
-    <div class="side-foot"><button id="settingsBtn">⚙ 设置</button></div>
+    <div class="side-foot">
+      <button id="settingsBtn">⚙ 设置</button>
+      <div id="diag" style="font-size:11px;color:var(--muted);padding:4px 4px 0"></div>
+    </div>
   </aside>
 
   <main class="card main">
@@ -193,7 +196,6 @@ function toast(msg){
 window.addEventListener("error", e => toast("页面脚本出错：" + (e.message || "未知")));
 window.addEventListener("unhandledrejection", e =>
   toast("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知")));
-}
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -207,10 +209,17 @@ async function api(endpoint, payload = {}){
   if (bridge && typeof bridge.apiPost === "function"){
     return normalize(await bridge.apiPost(endpoint, payload));
   }
-  const res = await fetch(`/api/plug/${PLUGIN}/${endpoint}`, {
-    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
-  });
-  return normalize(await res.json());
+  for (const url of [`/api/plug/${PLUGIN}/${endpoint}`,
+                     `/api/plugin/${PLUGIN}/${endpoint}`]){
+    try {
+      const res = await fetch(url, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) return normalize(await res.json());
+    } catch (e) { /* 继续试下一个 */ }
+  }
+  throw new Error("接口不可达（bridge 与 fetch 都失败）");
 }
 
 /* ---------- 左栏 ---------- */
@@ -289,12 +298,14 @@ function entryHTML(it){
 
 async function loadTree(){
   const r = await api("kb/tree", {});
-  if (r.status === "ok"){ state.tree = r.data; renderNav(); }
+  if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
+  if (!r.data || !Array.isArray(r.data.buckets)) throw new Error("返回结构异常");
+  state.tree = r.data; renderNav();
 }
 
 async function loadList(){
   const r = await api("kb/list", { bucket: state.bucket, scope: state.scope, search: state.search, size: 200 });
-  if (r.status !== "ok"){ toast(r.message || "加载失败"); return; }
+  if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   const d = r.data;
   state.cache.clear();
   (d.items || []).forEach(it => state.cache.set(it.id, it));
@@ -305,12 +316,30 @@ async function loadList(){
     : `<div class="empty">这里还没有词条</div>`;
 }
 
-async function reload(){
+async function ping(){
   try {
-    await loadTree();
-    await loadList();
-  } catch (err) {
-    toast("加载失败：" + (err && err.message ? err.message : err));
+    const r = await api("kb/ping", {});
+    if (r.status === "ok"){
+      $("diag").textContent = `自检 ok · ${r.data.rows} 条 · ${r.data.schema}`;
+    } else {
+      $("diag").textContent = "自检失败：" + (r.message || "");
+    }
+  } catch (e) {
+    $("diag").textContent = "自检异常：" + (e.message || e);
+  }
+}
+
+async function reload(){
+  await ping();
+  try { await loadTree(); }
+  catch (e) {
+    $("nav").innerHTML =
+      `<div class="nav" style="color:var(--danger);background:var(--danger-soft)">侧栏加载失败：${esc(e.message)}</div>`;
+  }
+  try { await loadList(); }
+  catch (e) {
+    $("list").innerHTML =
+      `<div class="empty" style="color:var(--danger)">列表加载失败：${esc(e.message)}</div>`;
   }
 }
 
