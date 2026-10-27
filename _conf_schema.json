@@ -1,0 +1,52 @@
+{
+  "enabled": {
+    "description": "总开关",
+    "type": "bool",
+    "default": true
+  },
+  "auto_learn": {
+    "description": "是否自动学习群聊黑话",
+    "type": "bool",
+    "default": true
+  },
+  "learn_frequency": {
+    "description": "每个群累计多少条消息触发一次提取",
+    "type": "int",
+    "default": 50
+  },
+  "extract_max": {
+    "description": "单次提取的最大条数",
+    "type": "int",
+    "default": 5
+  },
+  "inject_max": {
+    "description": "单次注入的最大条数",
+    "type": "int",
+    "default": 3
+  },
+  "max_meaning_chars": {
+    "description": "单条含义的字数上限，超出截断",
+    "type": "int",
+    "default": 200
+  },
+  "inject_pending": {
+    "description": "自审未过关的条目是否也允许注入",
+    "type": "bool",
+    "default": false
+  },
+  "provider_id": {
+    "description": "提取用的模型 ID，留空用当前会话模型",
+    "type": "string",
+    "default": ""
+  },
+  "listen_private": {
+    "description": "是否也学习私聊",
+    "type": "bool",
+    "default": false
+  },
+  "blacklist_groups": {
+    "description": "不学习的群号，逗号分隔",
+    "type": "string",
+    "default": ""
+  }
+}
