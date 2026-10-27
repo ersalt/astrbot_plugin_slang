@@ -119,7 +119,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <body>
 <div class="app">
   <aside class="card side">
-    <h1>黑话库<small>astrbot_plugin_slang</small></h1>
+    <h1>群语汇<small>astrbot_plugin_slang</small></h1>
     <div id="nav"></div>
     <div class="side-foot">
       <button id="settingsBtn">⚙ 设置</button>
@@ -176,16 +176,29 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
       <div class="field"><label>注入上限</label><input type="number" id="cfgInject" min="1" max="50" /></div>
     </div>
     <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="enabledSwitch" style="width:auto" /><label style="margin:0">总开关</label>
+      <input type="checkbox" id="injectAutoSwitch" style="width:auto" />
+      <label style="margin:0">自审过关也参与注入（关掉则只认人工通过）</label>
     </div>
     <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="wikiSyncEnable" style="width:auto" /><label style="margin:0">自动同步梗百科</label>
+      <input type="checkbox" id="enabledSwitch" style="width:auto" /><label style="margin:0">总开关</label>
     </div>
-    <div class="form-row">
-      <div class="field"><label>同步间隔（天）</label><input type="number" id="wikiSyncDays" min="1" max="365" /></div>
-      <div class="field"><label>每天几点检查</label><input type="time" id="wikiSyncTime" /></div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="wikiEnableSwitch" style="width:auto" />
+        <label style="margin:0">启用梗百科</label>
+      </div>
+      <div id="wikiBox">
+        <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+          <input type="checkbox" id="wikiSyncEnable" style="width:auto" /><label style="margin:0">自动同步梗百科</label>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>同步间隔（天）</label><input type="number" id="wikiSyncDays" min="1" max="365" /></div>
+          <div class="field"><label>每天几点检查</label><input type="time" id="wikiSyncTime" /></div>
+        </div>
+        <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
+      </div>
     </div>
-    <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
     <div class="modal-foot">
       <button class="link" id="setCancel">取消</button>
       <button class="primary" id="setSave">保存</button>
@@ -483,6 +496,9 @@ $("settingsBtn").onclick = async () => {
     $("cfgExtract").value = d.extract_max;
     $("cfgInject").value = d.inject_max;
   $("wikiSyncEnable").checked = !!d.wiki_sync_enable;
+  $("injectAutoSwitch").checked = !!d.inject_auto;
+  $("wikiEnableSwitch").checked = d.wiki_enable !== false;
+  $("wikiBox").style.display = $("wikiEnableSwitch").checked ? "" : "none";
   $("wikiSyncDays").value = d.wiki_sync_interval_days ?? 7;
   $("wikiSyncTime").value = d.wiki_sync_time || "04:30";
   const last = d.wiki_synced_at ? new Date(Number(d.wiki_synced_at) * 1000)
@@ -492,12 +508,17 @@ $("settingsBtn").onclick = async () => {
   $("setMask").classList.add("on");
 };
 $("setCancel").onclick = () => $("setMask").classList.remove("on");
+$("wikiEnableSwitch").onchange = () => {
+  $("wikiBox").style.display = $("wikiEnableSwitch").checked ? "" : "none";
+};
 $("setSave").onclick = async () => {
   const r = await api("kb/config", {
     provider_id: $("providerSelect").value,
     learn_frequency: Number($("cfgFreq").value),
     extract_max: Number($("cfgExtract").value),
     inject_max: Number($("cfgInject").value),
+    inject_auto: $("injectAutoSwitch").checked,
+    wiki_enable: $("wikiEnableSwitch").checked,
     wiki_sync_enable: $("wikiSyncEnable").checked,
     wiki_sync_interval_days: Number($("wikiSyncDays").value),
     wiki_sync_time: $("wikiSyncTime").value,

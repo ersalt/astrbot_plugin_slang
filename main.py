@@ -48,6 +48,8 @@ class JargonLite(Star):
         self.inject_max = max(1, int(self.config.get("inject_max", 3)))
         self.max_meaning = max(20, int(self.config.get("max_meaning_chars", 200)))
         self.inject_pending = bool(self.config.get("inject_pending", False))
+        self.inject_auto = bool(self.config.get("inject_auto", False))
+        self.wiki_enable = bool(self.config.get("wiki_enable", True))
         self.listen_private = bool(self.config.get("listen_private", False))
         self.blacklist = self._parse_list(self.config.get("blacklist_groups", ""))
 
@@ -106,6 +108,8 @@ class JargonLite(Star):
 
     async def _maybe_sync_wiki(self):
         if not self.config.get("wiki_sync_enable", False) or self._wiki_running:
+            return
+        if not self.wiki_enable:
             return
         hhmm = str(self.config.get("wiki_sync_time") or "04:30")
         if time.strftime("%H:%M") != hhmm:
@@ -248,7 +252,8 @@ class JargonLite(Star):
         text = (getattr(req, "prompt", "") or "").strip()
         if not text:
             return
-        entries = self.store.eligible(self._scope(event), self.inject_pending)
+        entries = self.store.eligible(self._scope(event), self.inject_auto,
+                                      self.inject_pending)
         hits = match(entries, text, limit=self.inject_max) if entries else []
         if hits:
             hint = format_hint(hits, self.max_meaning,
@@ -260,7 +265,7 @@ class JargonLite(Star):
                              + ", ".join(h.get("name", "") for h in hits))
             return
         # 黑话没命中，再看梗库（最多 1 条，避免抢上下文）
-        if not self._wiki_keys:
+        if not self.wiki_enable or not self._wiki_keys:
             return
         try:
             titles = match_wiki(self._wiki_keys, text, limit=1)
@@ -435,18 +440,18 @@ class JargonLite(Star):
         m_total, m_subs = bucket(lambda r: r["source"] == "manual")
         c_total, c_subs = bucket(lambda r: bool(r["scope"]))
         p_total, p_subs = bucket(lambda r: not r["review_manual"])
-        w_total = self.store.wiki_count()
+        buckets = [
+            {"key": "global", "label": "全局黑话", "count": g_total, "subs": []},
+            {"key": "manual", "label": "手动黑话", "count": m_total, "subs": m_subs},
+            {"key": "group", "label": "群黑话", "count": c_total, "subs": c_subs},
+            {"key": "pending", "label": "待审黑话", "count": p_total, "subs": p_subs},
+        ]
+        if self.wiki_enable:
+            buckets.append({"key": "wiki", "label": "梗百科",
+                            "count": self.store.wiki_count(), "subs": [],
+                            "readonly": True})
         return {"status": "ok", "message": "", "data": {
-            "total": len(rows),
-            "buckets": [
-                {"key": "global", "label": "全局黑话", "count": g_total, "subs": []},
-                {"key": "manual", "label": "手动黑话", "count": m_total, "subs": m_subs},
-                {"key": "group", "label": "群黑话", "count": c_total, "subs": c_subs},
-                {"key": "pending", "label": "待审黑话", "count": p_total, "subs": p_subs},
-                {"key": "wiki", "label": "梗百科", "count": w_total, "subs": [],
-                 "readonly": True},
-            ],
-        }}
+            "total": len(rows), "buckets": buckets}}
 
     async def api_list(self):
         p = await self._payload()
@@ -454,6 +459,10 @@ class JargonLite(Star):
         kind = p.get("kind") if p.get("kind") in ("all", "pending", "auto", "manual") else "all"
         bucket = str(p.get("bucket") or "")
         if bucket == "wiki":
+            if not self.wiki_enable:
+                return {"status": "ok", "message": "", "data": {
+                    "enabled": self.enabled, "stats": self._stats_web(),
+                    "total": 0, "page": 1, "size": 50, "items": []}}
             try:
                 wpage = max(1, int(p.get("page") or 1))
                 wsize = min(100, max(1, int(p.get("size") or 50)))
@@ -617,6 +626,14 @@ class JargonLite(Star):
             if "wiki_sync_enable" in p:
                 self.config["wiki_sync_enable"] = bool(p.get("wiki_sync_enable"))
                 changed.append("wiki_sync_enable")
+            if "wiki_enable" in p:
+                self.wiki_enable = bool(p.get("wiki_enable"))
+                self.config["wiki_enable"] = self.wiki_enable
+                changed.append("wiki_enable")
+            if "inject_auto" in p:
+                self.inject_auto = bool(p.get("inject_auto"))
+                self.config["inject_auto"] = self.inject_auto
+                changed.append("inject_auto")
             if "wiki_sync_interval_days" in p:
                 try:
                     self.config["wiki_sync_interval_days"] = max(
@@ -650,6 +667,8 @@ class JargonLite(Star):
             "extract_max": int(self.config.get("extract_max", 5)),
             "inject_max": int(self.config.get("inject_max", 3)),
             "wiki_sync_enable": bool(self.config.get("wiki_sync_enable", False)),
+            "wiki_enable": self.wiki_enable,
+            "inject_auto": self.inject_auto,
             "wiki_sync_interval_days": int(self.config.get("wiki_sync_interval_days", 7)),
             "wiki_sync_time": str(self.config.get("wiki_sync_time") or "04:30"),
             "wiki_count": self.store.wiki_count(),
@@ -795,7 +814,8 @@ class JargonLite(Star):
             yield event.plain_result("用法：/kb check 一句话（看会注入什么）")
             return
         text = " ".join(tokens[1:])
-        entries = self.store.eligible(self._scope(event), self.inject_pending)
+        entries = self.store.eligible(self._scope(event), self.inject_auto,
+                                      self.inject_pending)
         hits = match(entries, text, limit=self.inject_max)
         if not hits:
             yield event.plain_result("这句话不会命中任何词条。")

@@ -1,6 +1,6 @@
 name: astrbot_plugin_slang
-display_name: 黑话库
-short_desc: 群黑话学习 + 关键词命中注入，带自审与人工复核
+display_name: 群语汇
+short_desc: 群黑话与群语料的自学习库：自动提取、自审、人工复核，含梗百科快照
 desc: 群黑话学习与注入：LLM 提取 + 自审 + 人工复核，按群隔离，SQLite 持久化
 version: 1.0.0
 author: 贰叔

@@ -307,8 +307,15 @@ class JargonStore:
                 (str(key),)).fetchone()
             return dict(row) if row else None
 
-    def eligible(self, scope: str, include_pending: bool = False) -> list[dict]:
-        cond = "1 = 1" if include_pending else "(review_manual = 1 OR review_auto = 1)"
+    def eligible(self, scope: str, include_auto: bool = False,
+                 include_pending: bool = False) -> list[dict]:
+        """注入候选：默认只认人工通过，待审/自审未人工的都不算。"""
+        if include_pending:
+            cond = "1 = 1"
+        elif include_auto:
+            cond = "(review_manual = 1 OR review_auto = 1)"
+        else:
+            cond = "review_manual = 1"
         with self._lock:
             rows = self._conn.execute(
                 f"SELECT * FROM jargon WHERE {cond} AND (scope = '' OR scope = ?)",

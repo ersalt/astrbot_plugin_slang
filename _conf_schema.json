@@ -48,5 +48,30 @@
     "description": "不学习的群号，逗号分隔",
     "type": "string",
     "default": ""
+  },
+  "inject_auto": {
+    "description": "自审过关但未人工确认的词条是否参与注入（默认关闭，审核才有效）",
+    "type": "bool",
+    "default": false
+  },
+  "wiki_enable": {
+    "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
+    "type": "bool",
+    "default": true
+  },
+  "wiki_sync_enable": {
+    "description": "自动同步梗Wiki（公开 API）",
+    "type": "bool",
+    "default": false
+  },
+  "wiki_sync_interval_days": {
+    "description": "梗库自动同步间隔（天）",
+    "type": "int",
+    "default": 7
+  },
+  "wiki_sync_time": {
+    "description": "每天几点几分检查同步，HH:MM",
+    "type": "string",
+    "default": "04:30"
   }
 }
