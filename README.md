@@ -159,3 +159,23 @@ python tools/db_maintain.py
 `jargon` 去掉 `origin_scope`，`wiki` 去掉 `usage` / `origin`——这三列从来没写入过。补了两个索引：`pending(updated_at)`、`jargon(source, updated_at)`。
 
 迁移会自动备份成 `jargon.db.v3.bak`。迁移本身会临时把文件撑大（复制表），跑一次 `tools/db_maintain.py` 做 VACUUM 就能回收：实测 3.47MB → 6.62MB → 3.46MB。
+
+## 来源与致谢
+
+功能参考了三个项目，具体边界写在 [NOTICE.md](./NOTICE.md)：
+
+| 项目 | 许可 | 我们用了什么 |
+| --- | --- | --- |
+| [MaiBot](https://github.com/Mai-with-u/MaiBot) | 自定义 EULA（非开源许可） | 只借鉴“自动学黑话再注入”的思路，未使用代码 |
+| [astrbot_plugin_jargon](https://github.com/sleep430/astrbot_plugin_jargon) | 仓库无 LICENSE（保留所有权利） | 只借鉴流程与字段设计，未使用代码 |
+| [astrbot_plugin_memewiki](https://github.com/in1t1a1/astrbot_plugin_memewiki) | MIT | 参考 cnmeme.wiki 公开 API 的同步方式，独立实现 |
+
+梗词条来自 [cnmeme.wiki](https://cnmeme.wiki) 公开只读 API，版权归站点及原作者；本项目不打包词库，注入时保留来源标注。
+
+## 许可
+
+[MIT](./LICENSE) © 2026 贰叔
+
+---
+
+Power By DeepSeek V4.1 Flash 1017

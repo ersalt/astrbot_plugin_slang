@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
 """群黑话学习与注入（轻量版）。
 
 设计要点：

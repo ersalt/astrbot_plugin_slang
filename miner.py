@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
 """提取 + 自审。LLM 调用通过 AstrBot provider，解析逻辑纯本地。"""
 
 import json

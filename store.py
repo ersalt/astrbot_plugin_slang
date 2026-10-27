@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
 """SQLite 存储层 v3。
 
 模型：

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
 """关键词命中与注入格式化。纯函数，无外部依赖。"""
 
 import re

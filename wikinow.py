@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
 """梗Wiki 公开 API 同步（供插件定时调用，也供 tools/sync_memes.py 手动跑）。
 
 接口文档 https://cnmeme.wiki/developers/api
