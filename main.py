@@ -265,21 +265,20 @@ class JargonLite(Star):
             pass
         return data
 
-    @staticmethod
-    def _serialize(rec: dict) -> dict:
+    def _serialize(self, rec: dict) -> dict:
         return {
             "id": rec["id"],
             "content": rec["name"],
             "meaning": rec["meaning"],
             "count": rec["count"],
-            "is_jargon": bool(rec["manual_review"] or rec["auto_review"]),
-            "is_complete": bool(rec["manual_review"]),
+            "is_jargon": bool(rec["review_manual"] or rec["review_auto"]),
+            "is_complete": bool(rec["review_manual"]),
             "is_global": rec["scope"] == "",
             "created_by": "manual" if rec["source"] == "manual" else "ai",
             "scopes": {rec["scope"]: rec["count"]} if rec["scope"] else {},
             "evidence": self._json_list(rec["evidence"]),
-            "auto_review": bool(rec["auto_review"]),
-            "manual_review": bool(rec["manual_review"]),
+            "auto_review": bool(rec["review_auto"]),
+            "manual_review": bool(rec["review_manual"]),
             "auto_note": rec["auto_note"],
             "source": rec["source"],
             "scope": rec["scope"],
@@ -368,7 +367,7 @@ class JargonLite(Star):
         g_total, _ = bucket(lambda r: not r["scope"])
         m_total, m_subs = bucket(lambda r: r["source"] == "manual")
         c_total, c_subs = bucket(lambda r: bool(r["scope"]))
-        p_total, p_subs = bucket(lambda r: not r["manual_review"])
+        p_total, p_subs = bucket(lambda r: not r["review_manual"])
         return {"status": "ok", "message": "", "data": {
             "total": len(rows),
             "buckets": [
@@ -397,14 +396,14 @@ class JargonLite(Star):
         elif bucket == "group":
             rows = [r for r in rows if r["scope"]]
         elif bucket == "pending":
-            rows = [r for r in rows if not r["manual_review"]]
+            rows = [r for r in rows if not r["review_manual"]]
         scope = str(p.get("scope") or "").strip()
         if scope:
             rows = [r for r in rows if r["scope"] == scope]
         if search:
             rows = [r for r in rows if search in r["name"] or search in r["meaning"]]
         # 待复核排最前，其次自审过关，人工确认的沉底
-        rows.sort(key=lambda r: (r["manual_review"], r["auto_review"], -r["count"]))
+        rows.sort(key=lambda r: (r["review_manual"], r["review_auto"], -r["count"]))
         total = len(rows)
         items = [self._serialize(r) for r in rows[(page - 1) * size: page * size]]
         return {"status": "ok", "message": "", "data": {
@@ -566,8 +565,8 @@ class JargonLite(Star):
     @staticmethod
     def _fmt(rec: dict) -> str:
         scope = "全局" if not rec["scope"] else f"群{rec['scope']}"
-        flags = ("人工✅" if rec["manual_review"] else "人工✗") + "/" + \
-                ("自审✅" if rec["auto_review"] else "自审✗")
+        flags = ("人工✅" if rec["review_manual"] else "人工✗") + "/" + \
+                ("自审✅" if rec["review_auto"] else "自审✗")
         return f"#{rec['id']} {rec['name']}：{rec['meaning'][:40]} [{flags} {scope} ×{rec['count']}]"
 
     @filter.permission_type(filter.PermissionType.ADMIN)
