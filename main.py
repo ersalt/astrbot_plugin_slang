@@ -166,11 +166,22 @@ class JargonLite(Star):
     # ---------------- 工具 ----------------
 
     @staticmethod
-    def _parse_list(raw) -> set[str]:
+    def _split_list(raw) -> list[str]:
+        """逗号/顿号/分号/空白都算分隔符，中英文都支持。"""
         if not raw:
-            return set()
-        items = raw if isinstance(raw, (list, tuple, set)) else re.split(r"[,，;\s]+", str(raw))
-        return {str(x).strip() for x in items if str(x).strip()}
+            return []
+        items = raw if isinstance(raw, (list, tuple, set)) else \
+            re.split(r"[,，、;；\s]+", str(raw))
+        out = []
+        for x in items:
+            x = str(x).strip()
+            if x and x not in out:
+                out.append(x)
+        return out
+
+    @staticmethod
+    def _parse_list(raw) -> set[str]:
+        return set(JargonLite._split_list(raw))
 
     def _scope(self, event: AstrMessageEvent) -> str:
         try:
@@ -631,7 +642,11 @@ class JargonLite(Star):
                         v = min(int(f["max"]), v)
                     self.config[key] = v
                 else:
-                    self.config[key] = str(raw if raw is not None else "").strip()
+                    val = str(raw if raw is not None else "").strip()
+                    if key == "blacklist_groups":
+                        # 统一存成英文逗号，去重，去空白
+                        val = ",".join(self._split_list(val))
+                    self.config[key] = val
                 changed.append(key)
             if changed:
                 self._apply_config()
@@ -649,6 +664,8 @@ class JargonLite(Star):
         except Exception:  # noqa: BLE001
             pass
         values = {f["key"]: self.config.get(f["key"], f["default"]) for f in fields}
+        values["blacklist_groups"] = ",".join(
+            self._split_list(values.get("blacklist_groups", "")))
         return {"status": "ok", "message": "已保存" if changed else "", "data": {
             "fields": fields, "values": values, "providers": providers,
             "wiki_count": self.store.wiki_count(),
