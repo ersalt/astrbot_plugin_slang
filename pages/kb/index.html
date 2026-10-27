@@ -39,7 +39,7 @@ body{background:var(--bg);color:var(--text);
 .sub .count{min-width:18px;height:18px;font-size:11px;background:#e9eaef}
 .subs{display:flex;flex-direction:column;gap:7px;margin:0 0 14px}
 .sub{display:flex;align-items:center;justify-content:space-between;gap:6px;
-  padding:5px 8px 5px 22px;border-radius:9px;font-size:12.5px;color:#5b5c62;
+  min-height:42px;padding:5px 8px 5px 22px;border-radius:9px;font-size:12.5px;color:#5b5c62;
   cursor:pointer;transition:background .15s}
 .sub:hover{background:#f4f5f8}
 .sub.active{background:var(--accent-soft);color:#0a5ad4}
@@ -66,7 +66,7 @@ body{background:var(--bg);color:var(--text);
 .meaning{color:#3a3b40;word-break:break-word}
 .meta{font-size:11.5px;color:var(--muted);margin-top:3px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ops{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.ops{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
 .btn{font:inherit;font-size:11.5px;padding:6px 2px;border-radius:9px;cursor:pointer;
   border:1px solid var(--line);background:#fff;color:#4a4b51;white-space:nowrap;
   transition:background .12s,border-color .12s}
@@ -182,10 +182,6 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
       <div class="field"><label>注入上限</label><input type="number" id="cfgInject" min="1" max="50" /></div>
     </div>
     <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="injectAutoSwitch" style="width:auto" />
-      <label style="margin:0">自审过关也参与注入（关掉则只认人工通过）</label>
-    </div>
-    <div class="field" style="flex-direction:row;align-items:center;gap:8px">
       <input type="checkbox" id="enabledSwitch" style="width:auto" /><label style="margin:0">总开关</label>
     </div>
 
@@ -271,7 +267,9 @@ function renderNav(){
       html += `<div class="subs">` + b.subs.map(s => {
         const on = (state.bucket === b.key && state.scope === s.scope) ? " active" : "";
         const label = s.scope ? (s.name || "未命名群") : "全局";
-        const gid = s.scope ? `<span class="gid">[${esc(s.scope)}]</span>` : "";
+        const gid = s.scope
+          ? `<span class="gid">[${esc(s.scope)}]</span>`
+          : `<span class="gid">所有群通用</span>`;
         return `<div class="sub${on}" data-bucket="${b.key}" data-scope="${esc(s.scope)}">
           <span class="label"><span class="gname">${esc(label)}</span>${gid}</span>
           <span class="count">${s.count}</span></div>`;
@@ -283,8 +281,7 @@ function renderNav(){
 
 /* ---------- 右栏 ---------- */
 function titleOf(){
-  const label = {global:"全局黑话", manual:"手动黑话", group:"群黑话",
-    pending:"待审黑话", wiki:"梗百科"}[state.bucket] || "全部";
+  const label = {manual:"手动", auto:"黑话库", pending:"待审", wiki:"梗百科"}[state.bucket] || "全部";
   const activeBucket = state.tree ? state.tree.buckets.find(b => b.key === state.bucket) : null;
   if (state.scope){
     const sub = activeBucket && activeBucket.subs.find(s => s.scope === state.scope);
@@ -322,10 +319,10 @@ function entryHTML(it){
       <div class="ops"><button class="btn" disabled style="grid-column:1/-1">只读</button></div>
     </div>`;
   }
-  const isManual = !!it.manual_review;
-  const isAuto = !!it.auto_review;
-  const note = it.auto_note ? `自审：${esc(it.auto_note)}` : "";
-  const meta = [`×${it.count}`,
+  const src = it.source === "manual" ? "手动" : "自动";
+  const scope = it.is_global ? "全局" : `群 ${esc(it.scope)}`;
+  const note = it.auto_note ? `理由：${esc(it.auto_note)}` : "";
+  const meta = [src, scope, `×${it.count}`,
     it.updated_at ? new Date(it.updated_at * 1000).toLocaleString("zh-CN",{hour12:false}).slice(5,16) : "",
     note].filter(Boolean).join(" · ");
   return `
@@ -336,8 +333,7 @@ function entryHTML(it){
       <div class="meta">${meta}</div>
     </div>
     <div class="ops">
-      ${it.pending ? `<button class="btn" data-act="manual">通过</button>` : `<button class="btn ${isManual ? "on" : "off"}" data-act="manual">人工 ${isManual ? "✓" : "✗"}</button>`}
-      <button class="btn ${isAuto ? "on" : "off"}" data-act="auto">自审 ${isAuto ? "✓" : "✗"}</button>
+      <button class="btn ${it.pending ? "on" : ""}" data-act="approve">${it.pending ? "审核" : "驳回"}</button>
       <button class="btn" data-act="edit">修改</button>
       <button class="btn danger" data-act="del">删除</button>
     </div>
@@ -357,7 +353,7 @@ async function loadList(){
   if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   const d = r.data;
   state.cache.clear();
-  (d.items || []).forEach(it => state.cache.set(it.id, it));
+  (d.items || []).forEach(it => state.cache.set(String(it.id), it));
   $("title").textContent = titleOf();
   $("subtitle").textContent = `${d.total} 条`;
   $("list").innerHTML = (d.items || []).length
@@ -435,16 +431,12 @@ $("nav").addEventListener("click", e => {
 /* ---------- 条目操作 ---------- */
 $("list").addEventListener("click", async e => {
   const btn = e.target.closest("button[data-act]"); if (!btn) return;
-  const row = btn.closest(".entry"); const it = state.cache.get(Number(row.dataset.id));
+  const row = btn.closest(".entry"); const it = state.cache.get(String(row.dataset.id));
   if (!it) return;
   const act = btn.dataset.act;
 
-  if (act === "auto"){
-    const r = await api("kb/set_review", { content: it.content, field: "auto", value: !it.auto_review });
-    toast(r.message); if (r.status === "ok") reload(); return;
-  }
-  if (act === "manual"){
-    const r = await api("kb/approve", { content: it.content, value: !it.manual_review });
+  if (act === "approve"){
+    const r = await api("kb/approve", { content: it.content });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "global"){
@@ -517,7 +509,6 @@ $("settingsBtn").onclick = async () => {
     $("cfgExtract").value = d.extract_max;
     $("cfgInject").value = d.inject_max;
   $("wikiSyncEnable").checked = !!d.wiki_sync_enable;
-  $("injectAutoSwitch").checked = !!d.inject_auto;
   $("wikiEnableSwitch").checked = d.wiki_enable !== false;
   $("wikiBox").style.display = $("wikiEnableSwitch").checked ? "" : "none";
   $("wikiSyncDays").value = d.wiki_sync_interval_days ?? 7;
@@ -538,7 +529,6 @@ $("setSave").onclick = async () => {
     learn_frequency: Number($("cfgFreq").value),
     extract_max: Number($("cfgExtract").value),
     inject_max: Number($("cfgInject").value),
-    inject_auto: $("injectAutoSwitch").checked,
     wiki_enable: $("wikiEnableSwitch").checked,
     wiki_sync_enable: $("wikiSyncEnable").checked,
     wiki_sync_interval_days: Number($("wikiSyncDays").value),

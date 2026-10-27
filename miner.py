@@ -159,14 +159,14 @@ class Miner:
                 certain, reason = False, f"仅出现 {freq} 次"
             elif certain and any(w in item["meaning"] for w in VAGUE_WORDS):
                 certain, reason = False, "含义空泛（同义反复）"
-            self.store.pending_add(
+            self.store.submit(
                 item["name"], item["meaning"], scope=scope,
                 aliases=item["aliases"], evidence=item["evidence"],
-                auto_review=certain, auto_note=reason,
+                auto_note=reason, approved=certain,
             )
             saved += 1
             logger.info(
-                f"[slang] {scope} {'自审过关' if certain else '待复核'}："
+                f"[slang] {scope} {'直接入库' if certain else '进待审'}："
                 f"{item['name']} = {item['meaning']}")
         return saved
 

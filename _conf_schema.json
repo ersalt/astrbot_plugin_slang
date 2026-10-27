@@ -29,11 +29,6 @@
     "type": "int",
     "default": 200
   },
-  "inject_pending": {
-    "description": "自审未过关的条目是否也允许注入",
-    "type": "bool",
-    "default": false
-  },
   "provider_id": {
     "description": "提取用的模型 ID，留空用当前会话模型",
     "type": "string",
@@ -48,11 +43,6 @@
     "description": "不学习的群号，逗号分隔",
     "type": "string",
     "default": ""
-  },
-  "inject_auto": {
-    "description": "自审过关但未人工确认的词条是否参与注入（默认关闭，审核才有效）",
-    "type": "bool",
-    "default": false
   },
   "wiki_enable": {
     "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
