@@ -13,6 +13,7 @@ import pathlib
 import re
 import shutil
 import sqlite3
+import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -342,11 +343,14 @@ class JargonLite(Star):
         try:
             s = self.store.stats()
             cols = [r[1] for r in self.store._conn.execute("PRAGMA table_info(jargon)")]
+            build = time.strftime(
+                "%m-%d %H:%M:%S",
+                time.localtime(pathlib.Path(__file__).stat().st_mtime))
             return {"status": "ok", "message": "", "data": {
                 "plugin": "astrbot_plugin_slang",
                 "schema": "v2" if "scope" in cols else "v1",
                 "rows": s["total"], "pending": s["pending"],
-                "enabled": self.enabled,
+                "enabled": self.enabled, "build": build,
             }}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": f"自检失败: {exc}", "data": {}}
