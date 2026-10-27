@@ -417,7 +417,7 @@ class JargonLite(Star):
                 time.localtime(pathlib.Path(__file__).stat().st_mtime))
             return {"status": "ok", "message": "", "data": {
                 "plugin": "astrbot_plugin_slang",
-                "schema": "v3" if "scope" in cols else "v1",
+                "schema": "v" + (self.store.meta_get("schema_version") or "?"),
                 "rows": s["total"], "pending": s["pending"],
                 "enabled": self.enabled, "build": build,
                 "wiki": self.store.wiki_count(),

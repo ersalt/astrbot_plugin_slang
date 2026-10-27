@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS jargon (
     meaning TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'ai',
-    origin_scope TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 1,
     auto_note TEXT NOT NULL DEFAULT '',
     evidence TEXT NOT NULL DEFAULT '[]',
@@ -51,13 +50,13 @@ CREATE TABLE IF NOT EXISTS pending (
     UNIQUE(name, scope)
 );
 CREATE INDEX IF NOT EXISTS idx_pending_scope ON pending(scope);
+CREATE INDEX IF NOT EXISTS idx_pending_updated ON pending(updated_at);
+CREATE INDEX IF NOT EXISTS idx_jargon_source ON jargon(source, updated_at);
 CREATE TABLE IF NOT EXISTS wiki (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL UNIQUE,
     tags TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL DEFAULT '',
-    usage TEXT NOT NULL DEFAULT '',
-    origin TEXT NOT NULL DEFAULT '',
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_wiki_title ON wiki(title);
@@ -75,6 +74,18 @@ CREATE INDEX IF NOT EXISTS idx_buffer_umo ON buffer(umo, ts);
 
 MAX_EVIDENCE = 3
 
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_jargon_scope ON jargon(scope);
+CREATE INDEX IF NOT EXISTS idx_jargon_updated ON jargon(updated_at);
+CREATE INDEX IF NOT EXISTS idx_jargon_name ON jargon(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_jargon_source ON jargon(source, updated_at);
+CREATE INDEX IF NOT EXISTS idx_pending_scope ON pending(scope);
+CREATE INDEX IF NOT EXISTS idx_pending_updated ON pending(updated_at);
+CREATE INDEX IF NOT EXISTS idx_wiki_title ON wiki(title);
+CREATE INDEX IF NOT EXISTS idx_wiki_updated ON wiki(updated_at);
+CREATE INDEX IF NOT EXISTS idx_buffer_umo ON buffer(umo, ts);
+"""
+
 
 class JargonStore:
     def __init__(self, db_path: str):
@@ -89,6 +100,7 @@ class JargonStore:
             self._conn.executescript(SCHEMA)
             self._migrate_from_v1()
             self._migrate_v2_to_v3()
+            self._migrate_v3_to_v4()
             self._conn.execute("DELETE FROM buffer WHERE ts < ?",
                                (time.time() - 7 * 86400,))
             self._conn.commit()
@@ -129,10 +141,10 @@ class JargonStore:
         for (name, scope), r in merged.items():
             self._conn.execute(
                 """INSERT INTO jargon(id, name, aliases, meaning, scope, source,
-                   origin_scope, count, evidence, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                   count, evidence, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (r.get("id"), name, r.get("aliases") or "", r.get("meaning") or "",
-                 scope, r["_source"], r.get("origin_scope") or "", r.get("count") or 1,
+                 scope, r["_source"], r.get("count") or 1,
                  self._pack_evidence(r.get("evidence")),
                  r.get("created_at") or now, r.get("updated_at") or now))
         self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','2')")
@@ -161,6 +173,44 @@ class JargonStore:
         for r in drafts:
             self._insert_row("pending", r)
         self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','3')")
+        self._conn.commit()
+
+    def _migrate_v3_to_v4(self):
+        """v4：删掉两列从来没写过的字段，并补两个索引。"""
+        jcols = self._cols("jargon")
+        wcols = self._cols("wiki")
+        if "origin_scope" not in jcols and "usage" not in wcols:
+            return
+        try:
+            shutil.copy2(self.db_path, self.db_path + ".v3.bak")
+        except Exception:
+            pass
+        jargon_rows = [dict(r) for r in self._conn.execute("SELECT * FROM jargon")]
+        wiki_rows = [dict(r) for r in self._conn.execute("SELECT * FROM wiki")]
+        self._conn.execute("ALTER TABLE jargon RENAME TO jargon_v3")
+        self._conn.execute("ALTER TABLE wiki RENAME TO wiki_v3")
+        self._conn.executescript(SCHEMA)
+        for r in jargon_rows:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO jargon(id, name, aliases, meaning, scope,
+                   source, count, auto_note, evidence, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (r.get("id"), r.get("name"), r.get("aliases") or "",
+                 r.get("meaning") or "", r.get("scope") or "",
+                 r.get("source") or "ai", r.get("count") or 1,
+                 r.get("auto_note") or "", self._pack_evidence(r.get("evidence")),
+                 r.get("created_at") or time.time(),
+                 r.get("updated_at") or time.time()))
+        for r in wiki_rows:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO wiki(id, title, tags, summary, updated_at)
+                   VALUES(?,?,?,?,?)""",
+                (r.get("id"), r.get("title"), r.get("tags") or "",
+                 r.get("summary") or "", r.get("updated_at") or time.time()))
+        self._conn.execute("DROP TABLE jargon_v3")
+        self._conn.execute("DROP TABLE wiki_v3")
+        self._conn.executescript(INDEXES)
+        self._conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version','4')")
         self._conn.commit()
 
     def _insert_row(self, table: str, r: dict):
@@ -477,13 +527,12 @@ class JargonStore:
     def wiki_upsert_many(self, rows: list[dict]) -> int:
         with self._lock:
             self._conn.executemany(
-                """INSERT INTO wiki(title, tags, summary, usage, origin, updated_at)
-                   VALUES(?,?,?,?,?,?)
+                """INSERT INTO wiki(title, tags, summary, updated_at)
+                   VALUES(?,?,?,?)
                    ON CONFLICT(title) DO UPDATE SET
                      tags = excluded.tags, summary = excluded.summary,
-                     origin = excluded.origin, updated_at = excluded.updated_at""",
+                     updated_at = excluded.updated_at""",
                 [(r["title"], r.get("tags", ""), r.get("summary", ""),
-                  r.get("usage", ""), r.get("origin", ""),
                   r.get("updated_at") or time.time()) for r in rows])
             self._conn.commit()
             return self._conn.execute("SELECT COUNT(*) FROM wiki").fetchone()[0]

@@ -79,8 +79,6 @@ def sync(store, limit: int = 30, sleep: float = 0.5, max_pages: int = 0,
                 "title": title,
                 "tags": "、".join(it.get("tags") or []),
                 "summary": summary[:200],
-                "usage": "",
-                "origin": "",
                 "updated_at": ts or time.time(),
             })
             newest = max(newest, ts)

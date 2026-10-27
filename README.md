@@ -153,3 +153,9 @@ python tools/db_maintain.py
 `pending` 表存未人工通过的词条，`jargon` 只存已通过的。学习只写 `pending`；通过时整行搬到 `jargon` 并标记人工通过；删除只删 `pending`。注入只读 `jargon`，所以待审永远不会被模型检索到。
 
 列表中「通过」按钮是**移动**，不是删除——通过后条目会从待审消失，出现在「手动黑话」或「群黑话」里。
+
+### v4 结构
+
+`jargon` 去掉 `origin_scope`，`wiki` 去掉 `usage` / `origin`——这三列从来没写入过。补了两个索引：`pending(updated_at)`、`jargon(source, updated_at)`。
+
+迁移会自动备份成 `jargon.db.v3.bak`。迁移本身会临时把文件撑大（复制表），跑一次 `tools/db_maintain.py` 做 VACUUM 就能回收：实测 3.47MB → 6.62MB → 3.46MB。
