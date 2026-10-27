@@ -160,7 +160,7 @@ class Miner:
             elif certain and any(w in item["meaning"] for w in VAGUE_WORDS):
                 certain, reason = False, "含义空泛（同义反复）"
             self.store.upsert(
-                item["name"], item["meaning"], "group", scope,
+                item["name"], item["meaning"], scope=scope, source="ai",
                 aliases=item["aliases"], evidence=item["evidence"],
                 auto_review=certain, auto_note=reason,
             )

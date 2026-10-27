@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import json
 import pathlib
 import re
 import shutil
@@ -272,17 +273,25 @@ class JargonLite(Star):
             "count": rec["count"],
             "is_jargon": bool(rec["manual_review"] or rec["auto_review"]),
             "is_complete": bool(rec["manual_review"]),
-            "is_global": rec["category"] == "global" or rec["scope"] == "",
-            "created_by": "manual" if rec["manual_review"] else "ai",
+            "is_global": rec["scope"] == "",
+            "created_by": "manual" if rec["source"] == "manual" else "ai",
             "scopes": {rec["scope"]: rec["count"]} if rec["scope"] else {},
-            "evidence": [rec["evidence"]] if rec["evidence"] else [],
+            "evidence": self._json_list(rec["evidence"]),
             "auto_review": bool(rec["auto_review"]),
             "manual_review": bool(rec["manual_review"]),
             "auto_note": rec["auto_note"],
-            "category": rec["category"],
+            "source": rec["source"],
             "scope": rec["scope"],
             "updated_at": rec["updated_at"],
         }
+
+    @staticmethod
+    def _json_list(raw) -> list:
+        try:
+            data = json.loads(raw or "[]")
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
 
     def _stats_web(self) -> dict:
         s = self.store.stats()
@@ -320,7 +329,7 @@ class JargonLite(Star):
         _, rows = self.store.query("all", size=2000)
         counts: dict[str, int] = {}
         for r in rows:
-            if r["category"] == "group" and r["scope"]:
+            if r["scope"]:
                 counts[r["scope"]] = counts.get(r["scope"], 0) + 1
         names = self._group_names()
         data = [{"scope": s, "name": names.get(s, ""), "count": n}
@@ -342,8 +351,8 @@ class JargonLite(Star):
             return len(sub), subs
 
         g_total, _ = bucket(lambda r: not r["scope"])
-        m_total, m_subs = bucket(lambda r: r["category"] == "manual")
-        c_total, c_subs = bucket(lambda r: r["category"] == "group")
+        m_total, m_subs = bucket(lambda r: r["source"] == "manual")
+        c_total, c_subs = bucket(lambda r: bool(r["scope"]))
         p_total, p_subs = bucket(lambda r: not r["manual_review"])
         return {"status": "ok", "message": "", "data": {
             "total": len(rows),
@@ -369,14 +378,11 @@ class JargonLite(Star):
         if bucket == "global":
             rows = [r for r in rows if not r["scope"]]
         elif bucket == "manual":
-            rows = [r for r in rows if r["category"] == "manual"]
+            rows = [r for r in rows if r["source"] == "manual"]
         elif bucket == "group":
-            rows = [r for r in rows if r["category"] == "group"]
+            rows = [r for r in rows if r["scope"]]
         elif bucket == "pending":
             rows = [r for r in rows if not r["manual_review"]]
-        category = p.get("category") if p.get("category") in ("global", "group", "manual") else ""
-        if category:
-            rows = [r for r in rows if r["category"] == category]
         scope = str(p.get("scope") or "").strip()
         if scope:
             rows = [r for r in rows if r["scope"] == scope]
@@ -469,7 +475,7 @@ class JargonLite(Star):
         rec = self.store.get(content)
         if not rec:
             return {"status": "error", "message": f"没找到「{content}」", "data": {}}
-        if rec["category"] == "global":
+        if not rec["scope"]:
             self.store.demote(content)
             return {"status": "ok", "message": f"「{content}」已取消全局，不再注入", "data": {}}
         ok = self.store.promote(str(rec["id"]))
@@ -544,7 +550,7 @@ class JargonLite(Star):
 
     @staticmethod
     def _fmt(rec: dict) -> str:
-        scope = "全局" if rec["category"] == "global" else (f"群{rec['scope']}" if rec["scope"] else "手动")
+        scope = "全局" if not rec["scope"] else f"群{rec['scope']}"
         flags = ("人工✅" if rec["manual_review"] else "人工✗") + "/" + \
                 ("自审✅" if rec["auto_review"] else "自审✗")
         return f"#{rec['id']} {rec['name']}：{rec['meaning'][:40]} [{flags} {scope} ×{rec['count']}]"

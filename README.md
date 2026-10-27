@@ -84,13 +84,16 @@
 
 `data/plugin_data/astrbot_plugin_slang/jargon.db`
 
-- `jargon`：`name + category + scope` 唯一。`category` 取 `global` / `group` / `manual`，`scope` 为空表示全局。
-- `buffer`：待学习的原始消息，按 `umo` 分组，触发后清空。
+- `jargon`：`name + scope` 唯一。`scope` 为空表示全局，否则是群号；`source` 区分 `manual` / `ai`；`review_auto` / `review_manual` 两个审核标记。
+- `buffer`：待学习的原始消息，按 `umo` 分组，触发后清空；启动时清理 7 天前的残留。
+- `meta`：存 `schema_version`。
+
+首次启动会自动把 v1（带 `category` 字段的旧表）迁移到 v2，迁移前把原库备份成 `jargon.db.v1.bak`。同名同作用域的重复条目会合并：手动条目优先，次数相加。
 
 想看内容直接：
 
 ```sql
-SELECT id,name,meaning,count,auto_review,manual_review FROM jargon ORDER BY id DESC;
+SELECT id,name,meaning,scope,source,count,review_auto,review_manual FROM jargon ORDER BY id DESC;
 ```
 
 ## 已知限制
