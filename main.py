@@ -687,7 +687,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("list")
-    async def kb_list(self, event: AstrMessageEvent):
+    async def yh_list(self, event: AstrMessageEvent):
         """列出词条，带审核标记与归属。"""
         tokens = self._tokens(event)
         page = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 1
@@ -701,7 +701,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("pending")
-    async def kb_pending(self, event: AstrMessageEvent):
+    async def yh_pending(self, event: AstrMessageEvent):
         """列出还没人工通过、等着你复核的条目。"""
         total, rows = self.store.pending_query(size=10)
         if not rows:
@@ -718,7 +718,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("search")
-    async def kb_search(self, event: AstrMessageEvent):
+    async def yh_search(self, event: AstrMessageEvent):
         """按关键词搜词条名和含义。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
@@ -734,7 +734,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("add")
-    async def kb_add(self, event: AstrMessageEvent):
+    async def yh_add(self, event: AstrMessageEvent):
         """手动录入词条：/yh add global|group 名称 含义。"""
         if not event.is_admin():
             yield event.plain_result("只有管理员能录入。")
@@ -750,7 +750,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("del")
-    async def kb_del(self, event: AstrMessageEvent):
+    async def yh_del(self, event: AstrMessageEvent):
         """删除词条：/yh del 名称。"""
         if not event.is_admin():
             yield event.plain_result("只有管理员能删除。")
@@ -764,7 +764,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("approve")
-    async def kb_approve(self, event: AstrMessageEvent):
+    async def yh_approve(self, event: AstrMessageEvent):
         """标记人工通过：/yh approve 名称。"""
         if not event.is_admin():
             yield event.plain_result("只有管理员能审核。")
@@ -780,7 +780,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("promote")
-    async def kb_promote(self, event: AstrMessageEvent):
+    async def yh_promote(self, event: AstrMessageEvent):
         """把群词条提升为全局：/yh promote 名称。"""
         if not event.is_admin():
             yield event.plain_result("只有管理员能改归属。")
@@ -794,7 +794,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("stat")
-    async def kb_stat(self, event: AstrMessageEvent):
+    async def yh_stat(self, event: AstrMessageEvent):
         """查看词条总数与审核状态分布。"""
         s = self.store.stats()
         cats = "、".join(f"{k} {v}" for k, v in s["by_category"].items()) or "无"
@@ -804,7 +804,7 @@ class JargonLite(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("check")
-    async def kb_check(self, event: AstrMessageEvent):
+    async def yh_check(self, event: AstrMessageEvent):
         """预览一句话会注入哪些词条：/yh check 一句话。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
