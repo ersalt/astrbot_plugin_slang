@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: MIT
-"""群黑话学习与注入（轻量版）。
+"""群语汇：群黑话学习与注入。
 
 设计要点：
 - 消息缓冲落 SQLite，重启不丢，不靠内存计数
-- 提取后先自审，再决定是否标“自审过关”，不拦人工复核
-- 注入走关键词命中，最多 3 条，纯机械匹配，不调模型
+- 提取后由模型自审：有把握进黑话库，没把握进待审
+- 注入走关键词命中，最多 inject_max 条，纯机械匹配，不调模型
+- 注入内容作为临时 user content 追加，不改 system prompt
 """
 
 import asyncio
 import json
 import pathlib
 import re
-import sqlite3
 import time
 
 from astrbot.api import logger
@@ -23,6 +23,11 @@ try:  # 旧版 AstrBot 无 web 模块
     from astrbot.api.web import request as web_request
 except Exception:  # noqa: BLE001
     web_request = None
+
+try:  # 临时上下文用，旧版没有则该功能降级
+    from astrbot.core.agent.message import TextPart
+except Exception:  # noqa: BLE001
+    TextPart = None
 
 from .matcher import format_hint, format_wiki, match, match_wiki
 from .miner import Miner
@@ -224,29 +229,29 @@ class JargonLite(Star):
             return
         entries = self.store.eligible(self._scope(event))
         hits = match(entries, text, limit=self.inject_max) if entries else []
+        hint, tag = "", ""
         if hits:
             hint = format_hint(hits, self.max_meaning,
                                budget=self.max_meaning * self.inject_max + 120)
             if hint:
-                sep = "\n\n" if req.system_prompt else ""
-                req.system_prompt = (req.system_prompt or "") + sep + hint
-                logger.debug(f"[slang] 注入黑话 {len(hits)} 条: "
-                             + ", ".join(h.get("name", "") for h in hits))
-            return
+                tag = "黑话 " + ", ".join(h.get("name", "") for h in hits)
         # 黑话没命中，再看梗库（最多 1 条，避免抢上下文）
-        if not self.wiki_enable or not self._wiki_keys:
+        if not hint and self.wiki_enable and self._wiki_keys:
+            try:
+                titles = match_wiki(self._wiki_keys, text, limit=1)
+                if titles:
+                    hint = format_wiki(self.store.wiki_get(titles[0]))
+                    tag = f"梗 {titles[0]}"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[slang] 梗库查询失败: {exc}")
+        if not hint:
             return
-        try:
-            titles = match_wiki(self._wiki_keys, text, limit=1)
-            if not titles:
-                return
-            hint = format_wiki(self.store.wiki_get(titles[0]))
-            if hint:
-                sep = "\n\n" if req.system_prompt else ""
-                req.system_prompt = (req.system_prompt or "") + sep + hint
-                logger.debug(f"[slang] 注入梗 {titles[0]}")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[slang] 梗库注入失败: {exc}")
+        if TextPart is None:
+            logger.warning("[slang] 当前 AstrBot 不支持临时上下文，跳过注入")
+            return
+        # 作为临时 user content 追加，不修改 system_prompt，避免破坏缓存
+        req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
+        logger.debug(f"[slang] 注入{tag}")
 
     # ---------------- WebUI 审核台 ----------------
 
@@ -330,31 +335,23 @@ class JargonLite(Star):
         return {"total": s["total"], "learned": s["auto"], "manual": s["manual"],
                 "pending": s["pending"], "by_category": s["by_category"]}
 
-    def _group_names(self) -> dict:
-        """从 AstrBot 的 umo_aliases 读群名，读不到就返回空。"""
+    async def _group_names(self) -> dict:
+        """通过 AstrBot 的 DB 接口读取群名，读不到就返回空。"""
         try:
-            data_dir = pathlib.Path(
-                StarTools.get_data_dir("astrbot_plugin_slang")).parent.parent
-            db = data_dir / "data_v4.db"
-            if not db.exists():
-                return {}
-            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-            try:
-                rows = conn.execute(
-                    "SELECT umo, auto_name, user_alias FROM umo_aliases").fetchall()
-            finally:
-                conn.close()
-            out = {}
-            for umo, auto, alias in rows:
-                if ":GroupMessage:" not in (umo or ""):
-                    continue
-                gid = umo.rsplit(":", 1)[-1]
-                name = (alias or "").strip() or (auto or "").strip()
-                if name:
-                    out[gid] = name
-            return out
+            aliases = await self.context.get_db().get_umo_aliases()
         except Exception:  # noqa: BLE001
             return {}
+        out = {}
+        for a in aliases:
+            umo = getattr(a, "umo", "") or ""
+            if ":GroupMessage:" not in umo:
+                continue
+            gid = umo.rsplit(":", 1)[-1]
+            name = (getattr(a, "user_alias", "") or "").strip() or \
+                   (getattr(a, "auto_name", "") or "").strip()
+            if name:
+                out[gid] = name
+        return out
 
     async def api_groups(self):
         _, rows = self.store.query("all", size=2000)
@@ -362,7 +359,7 @@ class JargonLite(Star):
         for r in rows:
             if r["scope"]:
                 counts[r["scope"]] = counts.get(r["scope"], 0) + 1
-        names = self._group_names()
+        names = await self._group_names()
         data = [{"scope": s, "name": names.get(s, ""), "count": n}
                 for s, n in counts.items()]
         data.sort(key=lambda x: -x["count"])
@@ -388,7 +385,7 @@ class JargonLite(Star):
 
     async def api_tree(self):
         _, rows = self.store.query("all", size=3000)
-        names = self._group_names()
+        names = await self._group_names()
 
         def bucket(pred):
             sub = [r for r in rows if pred(r)]

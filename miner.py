@@ -5,12 +5,7 @@
 import json
 import re
 
-try:  # 允许脱离 AstrBot 单测
-    from astrbot.api import logger
-except Exception:  # noqa: BLE001
-    import logging
-
-    logger = logging.getLogger("slang")
+from astrbot.api import logger
 
 EXTRACT_PROMPT = """你在整理一个 QQ 群的黑话表。下面是从这个群抓的一段聊天。
 
