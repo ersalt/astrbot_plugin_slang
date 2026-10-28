@@ -89,6 +89,7 @@ class JargonStore:
             self._conn.execute("DELETE FROM buffer WHERE ts < ?",
                                (time.time() - 7 * 86400,))
             self._conn.commit()
+            self.dedupe()
 
     @staticmethod
     def _pack_evidence(raw) -> str:
@@ -187,6 +188,12 @@ class JargonStore:
 
     def add_manual(self, name: str, meaning: str, scope: str = "",
                    aliases: str = "") -> dict:
+        # 手动录入是明确的人工操作：清掉同名的待审草稿，避免两个桶里各一条
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM pending WHERE name = ? AND scope = ?",
+                ((name or "").strip()[:32], scope))
+            self._conn.commit()
         return self.upsert("jargon", name, meaning, scope=scope,
                            aliases=aliases, evidence="手动录入", source="manual")
 
@@ -292,67 +299,102 @@ class JargonStore:
     def rename(self, key: str, new_name: str) -> dict | None:
         return self.update("jargon", key, name=new_name)
 
-    def delete(self, key: str) -> bool:
-        rec = self.get(key)
-        if not rec:
-            return False
+    def delete(self, key: str, scope: str | None = None,
+               table: str | None = None) -> bool:
+        tables = [table] if table in ("jargon", "pending") else ["pending", "jargon"]
         with self._lock:
-            table = "jargon" if self._conn.execute(
-                "SELECT 1 FROM jargon WHERE id = ?", (rec["id"],)).fetchone() else "pending"
-            self._conn.execute(f"DELETE FROM {table} WHERE id = ?", (rec["id"],))
-            self._conn.commit()
-        return True
+            for t in tables:
+                rec = self._find(t, key, scope)
+                if rec:
+                    self._conn.execute(f"DELETE FROM {t} WHERE id = ?", (rec["id"],))
+                    self._conn.commit()
+                    return True
+        return False
 
     # ---------------- 审核（单标记） ----------------
 
     def submit(self, name: str, meaning: str, scope: str = "", aliases: str = "",
                evidence: str = "", auto_note: str = "", approved: bool = False) -> dict:
-        """学习产物：模型自审通过 -> 直接进黑话库；否则进待审。"""
-        table = "jargon" if approved else "pending"
-        return self.upsert(table, name, meaning, scope=scope, aliases=aliases,
-                           evidence=evidence, source="ai", auto_note=auto_note)
+        """学习产物入库。
 
-    def approve(self, key: str) -> str | None:
-        """待审 -> 黑话库；已过审 -> 退回待审。返回动作名。"""
+        已存在的词条只累加次数与证据，绝不覆盖人工/模型之前写下的含义。
+        已过审的优先于待审：同名同群已在 jargon 时不会再在 pending 里建重复条目。
+        """
+        name = (name or "").strip()[:32]
+        meaning = (meaning or "").strip()[:1000]
+        if not name or not meaning:
+            return {}
+        now = time.time()
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM pending WHERE name = ? ORDER BY updated_at DESC LIMIT 1",
-                (key,)).fetchone()
-            if row:
-                rec = dict(row)
-                self._upsert_approved(rec)
-                self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
-                self._conn.commit()
-                return "approved"
-            row = self._conn.execute(
-                "SELECT * FROM jargon WHERE name = ? ORDER BY updated_at DESC LIMIT 1",
-                (key,)).fetchone()
-            if row:
+            for table in ("jargon", "pending"):
+                row = self._conn.execute(
+                    f"SELECT * FROM {table} WHERE name = ? AND scope = ?",
+                    (name, scope)).fetchone()
+                if not row:
+                    continue
                 rec = dict(row)
                 self._conn.execute(
-                    """INSERT OR IGNORE INTO pending(name, aliases, meaning, scope,
-                       source, count, auto_note, evidence, created_at, updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                    (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
-                     rec["source"], rec["count"], rec["auto_note"], rec["evidence"],
-                     rec["created_at"], time.time()))
-                self._conn.execute("DELETE FROM jargon WHERE id = ?", (rec["id"],))
+                    f"""UPDATE {table} SET count = count + 1,
+                        evidence = ?, updated_at = ? WHERE id = ?""",
+                    (self._merge_evidence(rec["evidence"], evidence), now, rec["id"]))
                 self._conn.commit()
-                return "pending"
+                return self.get(name, table) or {}
+            table = "jargon" if approved else "pending"
+            self._conn.execute(
+                f"""INSERT INTO {table}(name, aliases, meaning, scope, source,
+                    count, auto_note, evidence, created_at, updated_at)
+                    VALUES(?,?,?,?,?,1,?,?,?,?)""",
+                (name, aliases, meaning, scope, "ai", auto_note,
+                 self._pack_evidence(evidence), now, now))
+            self._conn.commit()
+        return self.get(name, table) or {}
+
+    def approve(self, key: str, scope: str | None = None,
+                only: str | None = None) -> str | None:
+        """待审 -> 黑话库；已过审 -> 驳回待审。
+
+        scope 给定只处理该作用域；only 指定只查 pending 或 jargon，
+        避免同名条目同时存在于两表时操作反向。
+        """
+        with self._lock:
+            if only != "jargon":
+                prow = self._find("pending", key, scope)
+                if prow:
+                    self._promote(prow)
+                    self._conn.execute("DELETE FROM pending WHERE id = ?", (prow["id"],))
+                    self._conn.commit()
+                    return "approved"
+            if only != "pending":
+                jrow = self._find("jargon", key, scope)
+                if jrow:
+                    self._demote(jrow)
+                    self._conn.execute("DELETE FROM jargon WHERE id = ?", (jrow["id"],))
+                    self._conn.commit()
+                    return "pending"
         return None
 
-    def _upsert_approved(self, rec: dict):
-        row = self._conn.execute(
+    def _find(self, table: str, key: str, scope: str | None) -> dict | None:
+        sql = f"SELECT * FROM {table} WHERE name = ?"
+        params: list = [str(key)]
+        if scope is not None:
+            sql += " AND scope = ?"
+            params.append(scope)
+        sql += " ORDER BY updated_at DESC LIMIT 1"
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def _promote(self, rec: dict):
+        """待审 -> 黑话库：已有同名同群词条时只累加次数，保留原含义。"""
+        cur = self._conn.execute(
             "SELECT * FROM jargon WHERE name = ? AND scope = ?",
             (rec["name"], rec["scope"])).fetchone()
         now = time.time()
-        if row:
-            cur = dict(row)
+        if cur:
+            c = dict(cur)
             self._conn.execute(
-                """UPDATE jargon SET count = count + ?, meaning = ?,
-                   evidence = ?, updated_at = ? WHERE id = ?""",
-                (rec["count"], rec["meaning"],
-                 self._merge_evidence(cur["evidence"], ""), now, cur["id"]))
+                """UPDATE jargon SET count = count + ?, evidence = ?, updated_at = ?
+                   WHERE id = ?""",
+                (rec["count"] or 1, self._merge_evidence(c["evidence"], ""), now, c["id"]))
         else:
             self._conn.execute(
                 """INSERT INTO jargon(name, aliases, meaning, scope, source, count,
@@ -361,6 +403,42 @@ class JargonStore:
                 (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
                  rec["source"], rec["count"], rec["auto_note"], rec["evidence"],
                  rec["created_at"], now))
+
+    def _demote(self, rec: dict):
+        """黑话库 -> 待审：已有同名同群草稿时合并次数，内容以被驳回的这条为准。"""
+        cur = self._conn.execute(
+            "SELECT * FROM pending WHERE name = ? AND scope = ?",
+            (rec["name"], rec["scope"])).fetchone()
+        now = time.time()
+        if cur:
+            c = dict(cur)
+            self._conn.execute(
+                """UPDATE pending SET aliases = ?, meaning = ?, source = ?, count = ?,
+                   auto_note = ?, evidence = ?, updated_at = ? WHERE id = ?""",
+                (rec["aliases"], rec["meaning"], rec["source"],
+                 (rec["count"] or 1) + (c["count"] or 1), rec["auto_note"],
+                 self._merge_evidence(c["evidence"], ""), now, c["id"]))
+        else:
+            self._conn.execute(
+                """INSERT INTO pending(name, aliases, meaning, scope, source, count,
+                   auto_note, evidence, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
+                 rec["source"], rec["count"], rec["auto_note"], rec["evidence"],
+                 rec["created_at"], now))
+
+    def dedupe(self) -> int:
+        """清理两表里同名同群的重复：以已过审为准，合并次数后删掉待审那条。"""
+        with self._lock:
+            rows = [dict(r) for r in self._conn.execute(
+                """SELECT p.* FROM pending p JOIN jargon j
+                   ON p.name = j.name AND p.scope = j.scope""")]
+            for rec in rows:
+                self._promote(rec)
+                self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
+            if rows:
+                self._conn.commit()
+            return len(rows)
 
     # ---------------- 待审查询 ----------------
 

@@ -486,24 +486,39 @@ class JargonLite(Star):
             scope = str(p.get("scope") or "").strip()
             if scope == "__global__":
                 scope = ""
-        table = "pending" if self._in_pending(content) else "jargon"
-        rec = self.store.update(table, content, name or None, meaning[:500], scope)
+        old_scope = str(p.get("old_scope")).strip() if p.get("old_scope") is not None else None
+        if old_scope == "__global__":
+            old_scope = ""
+        table = "pending" if self._in_pending(content, old_scope) else "jargon"
+        cur = self.store._find(table, content, old_scope)
+        rec = self.store.update(table, str(cur["id"]) if cur else content,
+                                name or None, meaning[:500], scope)
         return {"status": "ok" if rec else "error",
                 "message": f"「{name or content}」已更新" if rec else "改不成，可能重名",
                 "data": {}}
 
-    def _in_pending(self, key: str) -> bool:
+    def _in_pending(self, key: str, scope: str | None = None) -> bool:
+        sql = "SELECT 1 FROM pending WHERE (name = ? OR CAST(id AS TEXT) = ?)"
+        params: list = [key, key]
+        if scope is not None:
+            sql += " AND scope = ?"
+            params.append(scope)
         with self.store._lock:
             return bool(self.store._conn.execute(
-                "SELECT 1 FROM pending WHERE name = ? OR CAST(id AS TEXT) = ? LIMIT 1",
-                (key, key)).fetchone())
+                sql + " LIMIT 1", params).fetchone())
 
     async def api_delete(self):
         p = await self._payload()
         content = str(p.get("content") or "").strip()
         if not content:
             return {"status": "error", "message": "缺少词条", "data": {}}
-        ok = self.store.delete(content)
+        scope = None
+        if "scope" in p:
+            scope = str(p.get("scope") or "").strip()
+            if scope == "__global__":
+                scope = ""
+        table = ("pending" if p.get("pending") else "jargon") if "pending" in p else None
+        ok = self.store.delete(content, scope, table)
         return {"status": "ok" if ok else "error",
                 "message": f"已删除「{content}」" if ok else f"没找到「{content}」", "data": {}}
 
@@ -512,11 +527,17 @@ class JargonLite(Star):
         content = str(p.get("content") or "").strip()
         if not content:
             return {"status": "error", "message": "缺少词条", "data": {}}
-        action = self.store.approve(content)
+        scope = None
+        if "scope" in p:
+            scope = str(p.get("scope") or "").strip()
+            if scope == "__global__":
+                scope = ""
+        only = "pending" if p.get("pending") else ("jargon" if p.get("from_jargon") else None)
+        action = self.store.approve(content, scope, only)
         if action == "approved":
             return {"status": "ok", "message": f"「{content}」已通过，移入黑话库", "data": {}}
         if action == "pending":
-            return {"status": "ok", "message": f"「{content}」已退回待审", "data": {}}
+            return {"status": "ok", "message": f"「{content}」已驳回，移回待审", "data": {}}
         return {"status": "error", "message": f"没找到「{content}」", "data": {}}
 
     async def api_toggle_global(self):

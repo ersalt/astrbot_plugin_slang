@@ -418,7 +418,7 @@ $("list").addEventListener("click", async e => {
   const act = btn.dataset.act;
 
   if (act === "approve"){
-    const r = await api("kb/approve", { content: it.content });
+    const r = await api("kb/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "global"){
@@ -431,7 +431,7 @@ $("list").addEventListener("click", async e => {
       setTimeout(() => { btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent="删除"; }, 2600);
       return;
     }
-    const r = await api("kb/delete", { content: it.content });
+    const r = await api("kb/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "edit"){
@@ -452,7 +452,7 @@ $("editSave").onclick = async () => {
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
   if (!name || !meaning) return toast("词条名和内容都不能为空");
-  const r = await api("kb/update", { content: editing.content, name, meaning, scope: $("editScope").value });
+  const r = await api("kb/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
   toast(r.message);
   if (r.status === "ok"){ $("editMask").classList.remove("on"); editing = null; reload(); }
 };
