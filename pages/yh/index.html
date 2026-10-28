@@ -330,7 +330,7 @@ function entryHTML(it){
 }
 
 async function loadTree(){
-  const r = await api("kb/tree", {});
+  const r = await api("yh/tree", {});
   if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   if (!r.data || !Array.isArray(r.data.buckets)) throw new Error("返回结构异常");
   state.tree = r.data; renderNav();
@@ -338,7 +338,7 @@ async function loadTree(){
 
 async function loadList(){
   $("sortSelect").style.display = state.bucket === "wiki" ? "none" : "";
-  const r = await api("kb/list", { bucket: state.bucket, scope: state.scope,
+  const r = await api("yh/list", { bucket: state.bucket, scope: state.scope,
     search: state.search, page: state.page, size: state.size, sort: state.sort });
   if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   const d = r.data;
@@ -366,7 +366,7 @@ function renderPager(total, page, size){
 
 async function ping(){
   try {
-    const r = await api("kb/ping", {});
+    const r = await api("yh/ping", {});
     if (r.status === "ok"){
       $("diag").textContent =
         `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · build ${r.data.build || "?"}`;
@@ -426,11 +426,11 @@ $("list").addEventListener("click", async e => {
   const act = btn.dataset.act;
 
   if (act === "approve"){
-    const r = await api("kb/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
+    const r = await api("yh/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "global"){
-    const r = await api("kb/toggle_global", { content: it.content });
+    const r = await api("yh/toggle_global", { content: it.content });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "del"){
@@ -439,7 +439,7 @@ $("list").addEventListener("click", async e => {
       setTimeout(() => { btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent="删除"; }, 2600);
       return;
     }
-    const r = await api("kb/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
+    const r = await api("yh/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
     toast(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "edit"){
@@ -460,7 +460,7 @@ $("editSave").onclick = async () => {
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
   if (!name || !meaning) return toast("词条名和内容都不能为空");
-  const r = await api("kb/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
+  const r = await api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
   toast(r.message);
   if (r.status === "ok"){ $("editMask").classList.remove("on"); editing = null; reload(); }
 };
@@ -482,7 +482,7 @@ $("addSave").onclick = async () => {
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
   if (!name || !meaning) return toast("词条名和内容都不能填");
-  const r = await api("kb/add", { content: name, meaning, scope });
+  const r = await api("yh/add", { content: name, meaning, scope });
   toast(r.message);
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
@@ -564,7 +564,7 @@ function fieldHTML(f, value){
 }
 
 $("settingsBtn").onclick = async () => {
-  const r = await api("kb/config", {});
+  const r = await api("yh/config", {});
   if (r.status !== "ok"){ toast(r.message || "读取配置失败"); return; }
   renderSettings(r.data);
   $("setMask").classList.add("on");
@@ -580,7 +580,7 @@ $("setSave").onclick = async () => {
       : f.type === "int" ? Number(el.value)
       : el.value;
   });
-  const r = await api("kb/config", payload);
+  const r = await api("yh/config", payload);
   toast(r.message || "已保存");
   if (r.status === "ok"){
     $("setMask").classList.remove("on");

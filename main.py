@@ -278,7 +278,7 @@ class JargonLite(Star):
         if not hasattr(self.context, "register_web_api"):
             logger.warning("[slang] 当前 AstrBot 不支持插件页面，跳过")
             return
-        prefix = "/astrbot_plugin_slang/kb"
+        prefix = "/astrbot_plugin_slang/yh"
         routes = [
             ("list", self.api_list, ["GET", "POST"], "词条列表"),
             ("ping", self.api_ping, ["GET", "POST"], "连通性自检"),

@@ -2,7 +2,7 @@ name: astrbot_plugin_slang
 display_name: 群语汇
 short_desc: 群黑话与群语料的自学习库：自动提取、模型自审、待审复核，含梗百科快照
 desc: 群黑话自动学习与注入：LLM 提取 + 模型自审 + 待审复核，按群隔离，SQLite 持久化
-version: 1.0.4
+version: 1.0.5
 author: 贰叔
 repo: https://github.com/ersalt/astrbot_plugin_slang
 astrbot_version: ">=4.11.0"
