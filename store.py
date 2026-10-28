@@ -242,8 +242,13 @@ class JargonStore:
                 (*params, size, (page - 1) * size)).fetchall()
             return total, [dict(r) for r in rows]
 
+    @staticmethod
+    def _order(sort: str) -> str:
+        return "count DESC, updated_at DESC, id DESC" if sort == "count" else "updated_at DESC, id DESC"
+
     def query_page(self, bucket: str = "all", search: str = "", scope: str = "",
-                   page: int = 1, size: int = 50) -> tuple[int, list[dict]]:
+                   page: int = 1, size: int = 50,
+                   sort: str = "recent") -> tuple[int, list[dict]]:
         where, params = [], []
         if bucket == "manual":
             where.append("source = 'manual'")
@@ -261,7 +266,7 @@ class JargonStore:
                 f"SELECT COUNT(*) FROM jargon {sql_where}", params).fetchone()[0]
             rows = self._conn.execute(
                 f"""SELECT * FROM jargon {sql_where}
-                    ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                    ORDER BY {self._order(sort)} LIMIT ? OFFSET ?""",
                 (*params, size, (page - 1) * size)).fetchall()
             return total, [dict(r) for r in rows]
 
@@ -452,18 +457,22 @@ class JargonStore:
                 "SELECT scope, COUNT(*) n FROM pending GROUP BY scope").fetchall()
             return [{"scope": r[0] or "", "count": r[1]} for r in rows]
 
-    def pending_query(self, search: str = "", page: int = 1,
-                      size: int = 50) -> tuple[int, list[dict]]:
-        where, params = "", []
+    def pending_query(self, search: str = "", page: int = 1, size: int = 50,
+                      scope: str = "", sort: str = "recent") -> tuple[int, list[dict]]:
+        where, params = [], []
         if search:
-            where = "WHERE name LIKE ? OR meaning LIKE ?"
-            params = [f"%{search}%", f"%{search}%"]
+            where.append("(name LIKE ? OR meaning LIKE ?)")
+            params += [f"%{search}%", f"%{search}%"]
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        sql_where = ("WHERE " + " AND ".join(where)) if where else ""
         with self._lock:
             total = self._conn.execute(
-                f"SELECT COUNT(*) FROM pending {where}", params).fetchone()[0]
+                f"SELECT COUNT(*) FROM pending {sql_where}", params).fetchone()[0]
             rows = self._conn.execute(
-                f"""SELECT * FROM pending {where}
-                    ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                f"""SELECT * FROM pending {sql_where}
+                    ORDER BY {self._order(sort)} LIMIT ? OFFSET ?""",
                 (*params, size, (page - 1) * size)).fetchall()
             return total, [dict(r) for r in rows]
 

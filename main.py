@@ -422,9 +422,11 @@ class JargonLite(Star):
             size = min(200, max(1, int(p.get("size") or 50)))
         except (TypeError, ValueError):
             page, size = 1, 50
+        sort = "count" if p.get("sort") == "count" else "recent"
+        scope = str(p.get("scope") or "").strip()
 
         if bucket == "pending":
-            ptotal, rows = self.store.pending_query(search, page, size)
+            ptotal, rows = self.store.pending_query(search, page, size, scope, sort)
             items = [{
                 "id": f"p{r['id']}", "content": r["name"], "meaning": r["meaning"],
                 "count": r["count"], "is_global": r["scope"] == "",
@@ -454,8 +456,7 @@ class JargonLite(Star):
                 "total": wtotal, "page": page, "size": size, "items": items}}
 
         kind = {"manual": "manual", "auto": "auto"}.get(bucket, "all")
-        scope = str(p.get("scope") or "").strip()
-        total, items = self.store.query_page(kind, search, scope, page, size)
+        total, items = self.store.query_page(kind, search, scope, page, size, sort)
         return {"status": "ok", "message": "", "data": {
             "enabled": self.enabled, "stats": self._stats_web(),
             "total": total, "page": page, "size": size,
