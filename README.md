@@ -133,7 +133,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 ## 已知限制
 
 - 关键词是子串匹配，半截词要靠 `aliases` 补
-- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`
+- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`；计划加「拒绝词表」硬过滤，见 [TODO.md](./TODO.md)
 - 模型自审可能误放行；不放心就把 `auto_learn` 关掉，只手动录入
 - 每条含义最多 `max_meaning_chars` 字、单次最多 `inject_max` 条
 - 梗库只存摘要，没有正文和「怎么接」，需要更详细的用法得另做
@@ -149,6 +149,10 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 | [astrbot_plugin_memewiki](https://github.com/in1t1a1/astrbot_plugin_memewiki) | MIT | 参考 cnmeme.wiki 公开 API 的同步方式，独立实现 |
 
 梗词条来自 cnmeme.wiki，版权归站点及原作者；本项目不打包词库，只本地缓存，注入时保留来源标注。
+
+## 路线图
+
+待更新项见 [TODO.md](./TODO.md)。
 
 ## 许可
 
