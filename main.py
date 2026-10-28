@@ -34,11 +34,28 @@ from .miner import Miner
 from .store import JargonStore
 
 
+def _read_version(default: str = "0.0.0") -> str:
+    """版本号只维护 metadata.yaml 一处，避免两处不一致。"""
+    try:
+        text = pathlib.Path(__file__).with_name("metadata.yaml").read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return default
+    for line in text.splitlines():
+        if line.strip().startswith("version:"):
+            value = line.split(":", 1)[1].strip().strip("\"'")
+            if value:
+                return value
+    return default
+
+
+PLUGIN_VERSION = _read_version()
+
+
 @register(
     "astrbot_plugin_slang",
     "贰叔",
-    "群黑话学习与注入：提取 + 自审 + 人工复核，按群隔离",
-    "1.0.0",
+    "群黑话自动学习与注入：LLM 提取 + 模型自审 + 待审复核，按群隔离，SQLite 持久化",
+    PLUGIN_VERSION,
     "",
 )
 class JargonLite(Star):
@@ -375,7 +392,6 @@ class JargonLite(Star):
                 time.localtime(pathlib.Path(__file__).stat().st_mtime))
             return {"status": "ok", "message": "", "data": {
                 "plugin": "astrbot_plugin_slang",
-                "schema": "1.0",
                 "rows": s["total"], "pending": s["pending"],
                 "enabled": self.enabled, "build": build,
                 "wiki": self.store.wiki_count(),
