@@ -203,7 +203,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script>
 const PLUGIN = "astrbot_plugin_slang";
 const $ = id => document.getElementById(id);
-const state = { bucket: "manual", scope: "", search: "", tree: null,
+const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent" };
 
 function toast(msg){
@@ -245,7 +245,7 @@ function renderNav(){
   if (!tree) return;
   const keep = tree.buckets.filter(b => b.key !== "global");
   $("nav").innerHTML = keep.map(b => {
-    const active = (state.bucket === b.key && !state.scope) ? " active" : "";
+    const active = (state.bucket === b.key && !state.scopeSel) ? " active" : "";
     const collapsed = state.collapsed.has(b.key);
     const caret = (b.subs && b.subs.length) ? (collapsed ? "▸" : "▾") : "";
     let html = `<div class="nav${active}" data-bucket="${b.key}">
@@ -254,7 +254,7 @@ function renderNav(){
       <span class="count">${b.count}</span></div>`;
     if (b.subs && b.subs.length && !collapsed){
       html += `<div class="subs">` + b.subs.map(s => {
-        const on = (state.bucket === b.key && state.scope === s.scope) ? " active" : "";
+        const on = (state.bucket === b.key && state.scopeSel && state.scope === s.scope) ? " active" : "";
         const label = s.scope ? (s.name || "未命名群") : "全局";
         const gid = s.scope
           ? `<span class="gid">[${esc(s.scope)}]</span>`
@@ -272,7 +272,8 @@ function renderNav(){
 function titleOf(){
   const label = {manual:"手动", auto:"黑话库", pending:"待审", wiki:"梗百科"}[state.bucket] || "全部";
   const activeBucket = state.tree ? state.tree.buckets.find(b => b.key === state.bucket) : null;
-  if (state.scope){
+  if (state.scopeSel){
+    if (!state.scope) return `${label} · 全局`;
     const sub = activeBucket && activeBucket.subs.find(s => s.scope === state.scope);
     return `${label} · ${sub && sub.name ? sub.name : "群"} [${state.scope}]`;
   }
@@ -339,7 +340,8 @@ async function loadTree(){
 async function loadList(){
   $("sortSelect").style.display = state.bucket === "wiki" ? "none" : "";
   const r = await api("yh/list", { bucket: state.bucket, scope: state.scope,
-    search: state.search, page: state.page, size: state.size, sort: state.sort });
+    scoped: state.scopeSel, search: state.search, page: state.page,
+    size: state.size, sort: state.sort });
   if (r.status !== "ok") throw new Error(r.message || "接口返回错误");
   const d = r.data;
   state.cache.clear();
@@ -396,12 +398,14 @@ async function reload(){
 $("nav").addEventListener("click", e => {
   const sub = e.target.closest(".sub");
   if (sub){
-    state.bucket = sub.dataset.bucket; state.scope = sub.dataset.scope;
+    state.bucket = sub.dataset.bucket;
+    state.scope = sub.dataset.scope;
+    state.scopeSel = true;
   } else {
     const nav = e.target.closest(".nav"); if (!nav) return;
     const key = nav.dataset.bucket;
     // 再点一次当前父列表 = 折叠/展开子列表
-    if (state.bucket === key && !state.scope && (state.tree || [])){
+    if (state.bucket === key && !state.scopeSel && (state.tree || [])){
       const b = state.tree.buckets.find(x => x.key === key);
       if (b && b.subs && b.subs.length){
         if (state.collapsed.has(key)) state.collapsed.delete(key);
@@ -410,7 +414,7 @@ $("nav").addEventListener("click", e => {
         return;
       }
     }
-    state.bucket = key; state.scope = "";
+    state.bucket = key; state.scope = ""; state.scopeSel = false;
     state.collapsed.delete(key);
   }
   state.search = ""; $("searchInput").value = "";

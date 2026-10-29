@@ -247,8 +247,8 @@ class JargonStore:
         return "count DESC, updated_at DESC, id DESC" if sort == "count" else "updated_at DESC, id DESC"
 
     def query_page(self, bucket: str = "all", search: str = "", scope: str = "",
-                   page: int = 1, size: int = 50,
-                   sort: str = "recent") -> tuple[int, list[dict]]:
+                   page: int = 1, size: int = 50, sort: str = "recent",
+                   scoped: bool = False) -> tuple[int, list[dict]]:
         where, params = [], []
         if bucket == "manual":
             where.append("source = 'manual'")
@@ -257,7 +257,7 @@ class JargonStore:
         if search:
             where.append("(name LIKE ? OR meaning LIKE ?)")
             params += [f"%{search}%", f"%{search}%"]
-        if scope:
+        if scoped:
             where.append("scope = ?")
             params.append(scope)
         sql_where = ("WHERE " + " AND ".join(where)) if where else ""
@@ -458,12 +458,13 @@ class JargonStore:
             return [{"scope": r[0] or "", "count": r[1]} for r in rows]
 
     def pending_query(self, search: str = "", page: int = 1, size: int = 50,
-                      scope: str = "", sort: str = "recent") -> tuple[int, list[dict]]:
+                      scope: str = "", sort: str = "recent",
+                      scoped: bool = False) -> tuple[int, list[dict]]:
         where, params = [], []
         if search:
             where.append("(name LIKE ? OR meaning LIKE ?)")
             params += [f"%{search}%", f"%{search}%"]
-        if scope:
+        if scoped:
             where.append("scope = ?")
             params.append(scope)
         sql_where = ("WHERE " + " AND ".join(where)) if where else ""
