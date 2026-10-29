@@ -5,7 +5,7 @@
     "default": true
   },
   "auto_learn": {
-    "description": "是否自动学习群聊黑话",
+    "description": "是否自动学习群聊黑话（会本地缓存群聊文本片段用于提取，触发时发送给你配置的模型）",
     "type": "bool",
     "default": true
   },
