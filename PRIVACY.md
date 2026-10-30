@@ -20,10 +20,16 @@
 全部存在本机 SQLite：
 
 ```
-data/plugin_data/astrbot_plugin_slang/jargon.db   →  buffer 表
+data/plugin_data/astrbot_plugin_slang/jargon.db
+  ├─ manual / auto / manual_pending / auto_pending   词条
+  ├─ wiki                                             梗库快照
+  ├─ buffer                                           待学消息
+  └─ meta                                             同步水位、schema_version
 ```
 
-字段：`umo`（会话标识）、`sender`（昵称）、`text`（消息原文，超过 500 字截断）、`ts`（时间戳）。
+词条字段：`name`（词条名）、`aliases`、`meaning`（含义）、`scope`（作用域）、`contributor`（最早提到的群友昵称/手动录入）、`count`、`evidence`。
+
+缓冲字段：`umo`（会话标识）、`sender`（昵称）、`text`（消息原文，超过 500 字截断）、`ts`（时间戳）。
 
 **不上传到本插件作者的任何服务器**，插件本身没有上报逻辑。
 
@@ -34,6 +40,7 @@ data/plugin_data/astrbot_plugin_slang/jargon.db   →  buffer 表
 | 攒够 `learn_frequency` 条并完成一次提取 | 清空该群的缓冲 |
 | 插件启动 | 清理 7 天前的缓冲 |
 | 缓冲超过 2 万行 | 自动截断最旧的 |
+| 词条 | 一直保留，直到在页面或指令里删除 |
 
 ## 什么时候离开本机
 
