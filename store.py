@@ -380,17 +380,23 @@ class JargonStore:
             if only != "jargon":
                 prow = self._find("pending", key, scope)
                 if prow:
+                    clash = self._find("jargon", prow["name"], prow["scope"])
+                    if clash:
+                        return {"action": "conflict_jargon", "conflict": clash}
                     self._promote(prow)
                     self._conn.execute("DELETE FROM pending WHERE id = ?", (prow["id"],))
                     self._conn.commit()
-                    return "approved"
+                    return {"action": "approved", "conflict": None}
             if only != "pending":
                 jrow = self._find("jargon", key, scope)
                 if jrow:
+                    clash = self._find("pending", jrow["name"], jrow["scope"])
+                    if clash:
+                        return {"action": "conflict_pending", "conflict": clash}
                     self._demote(jrow)
                     self._conn.execute("DELETE FROM jargon WHERE id = ?", (jrow["id"],))
                     self._conn.commit()
-                    return "pending"
+                    return {"action": "pending", "conflict": None}
         return None
 
     def _find(self, table: str, key: str, scope: str | None) -> dict | None:
@@ -455,16 +461,23 @@ class JargonStore:
             rows = [dict(r) for r in self._conn.execute(
                 """SELECT p.* FROM pending p JOIN jargon j
                    ON p.name = j.name AND p.scope = j.scope""")]
+            merged = 0
             for rec in rows:
+                j = self._find("jargon", rec["name"], rec["scope"]) or {}
+                same = (j.get("meaning") or "").strip() == (rec.get("meaning") or "").strip()
+                if not same:
+                    # 含义不同：保留两条，等人工处理，绝不静默丢信息
+                    continue
                 self._promote(rec)
                 self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
-            if rows:
+                merged += 1
+            if merged:
                 self._conn.commit()
-            return len(rows)
+            return merged
 
     def bulk_pending(self, action: str, ids: list) -> dict:
         """批量处理待审：approve = 通过并移入黑话库，delete = 删除。"""
-        approved = deleted = 0
+        approved = deleted = skipped = 0
         with self._lock:
             for raw in ids:
                 key = str(raw).strip().lstrip("p")
@@ -476,13 +489,16 @@ class JargonStore:
                     continue
                 rec = dict(row)
                 if action == "approve":
+                    if self._find("jargon", rec["name"], rec["scope"]):
+                        skipped += 1
+                        continue
                     self._promote(rec)
                     approved += 1
                 else:
                     deleted += 1
                 self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
             self._conn.commit()
-        return {"approved": approved, "deleted": deleted}
+        return {"approved": approved, "deleted": deleted, "skipped": skipped}
 
     # ---------------- 待审查询 ----------------
 

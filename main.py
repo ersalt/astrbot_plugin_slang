@@ -585,11 +585,26 @@ class JargonLite(Star):
             if scope == "__global__":
                 scope = ""
         only = "pending" if p.get("pending") else ("jargon" if p.get("from_jargon") else None)
-        action = self.store.approve(content, scope, only)
+        res = self.store.approve(content, scope, only)
+        if not res:
+            return {"status": "error", "message": f"没找到「{content}」", "data": {}}
+        action = res["action"]
         if action == "approved":
             return {"status": "ok", "message": f"「{content}」已通过，移入黑话库", "data": {}}
         if action == "pending":
             return {"status": "ok", "message": f"「{content}」已驳回，移回待审", "data": {}}
+        clash = res.get("conflict") or {}
+        excerpt = (clash.get("meaning") or "").strip().replace("\n", " ")[:20]
+        if action == "conflict_pending":
+            return {"status": "error",
+                    "message": f"驳回失败：待审已有同名同群条目（{excerpt}…，id {clash.get('id')}），"
+                               "两条都保留，请先处理待审那条",
+                    "data": {}}
+        if action == "conflict_jargon":
+            return {"status": "error",
+                    "message": f"通过失败：黑话库已有同名同群条目（{excerpt}…，id {clash.get('id')}），"
+                               "两条都保留，请先处理黑话库那条",
+                    "data": {}}
         return {"status": "error", "message": f"没找到「{content}」", "data": {}}
 
     async def api_bulk(self):
@@ -601,6 +616,8 @@ class JargonLite(Star):
         res = self.store.bulk_pending(action, ids[:200])
         if action == "approve":
             msg = f"已通过 {res['approved']} 条，移入黑话库"
+            if res.get("skipped"):
+                msg += f"；跳过 {res['skipped']} 条（黑话库已有同名同群条目）"
         else:
             msg = f"已删除 {res['deleted']} 条待审"
         return {"status": "ok", "message": msg, "data": res}
@@ -828,10 +845,19 @@ class JargonLite(Star):
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh approve 名称")
             return
-        rec = self.store.approve(tokens[1])
-        yield event.plain_result(
-            "已通过，移入黑话库。" if rec == "approved"
-            else ("已退回待审。" if rec == "pending" else "没找到这个条目。"))
+        res = self.store.approve(tokens[1])
+        if not res:
+            yield event.plain_result("没找到这个条目。")
+            return
+        action = res["action"]
+        if action == "approved":
+            yield event.plain_result("已通过，移入黑话库。")
+        elif action == "pending":
+            yield event.plain_result("已驳回，移回待审。")
+        else:
+            clash = res.get("conflict") or {}
+            yield event.plain_result(
+                f"操作失败：目标表已有同名同群条目（id {clash.get('id')}），两条都保留，请先处理那条。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("promote")

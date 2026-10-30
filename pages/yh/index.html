@@ -224,7 +224,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.3.3";
+const PAGE_BUILD = "v1.4.1";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -499,7 +499,6 @@ $("editSave").onclick = async () => {
   const meaning = $("editMeaning").value.trim();
   if (!name || !meaning){
     showAlert("词条名和内容都不能为空", "没法保存");
-    showAlert("词条名和内容都不能为空", "没法保存");
     return;
   }
   const err = $("editErr");
@@ -516,14 +515,13 @@ $("editSave").onclick = async () => {
     return;
   }
   if (r.status === "ok"){
-    showAlert(r.message, "已保存");
+    showAlert(r.message || "内容已更新", "已保存");
     $("editMask").classList.remove("on"); editing = null; reload();
     return;
   }
   err.textContent = r.message || "保存失败";
   err.style.display = "block";
-  showAlert(r.message, "保存失败");
-  showAlert(r.message || "保存失败", "没能保存");
+  showAlert(r.message || "服务器未返回原因，请查看 AstrBot 日志", "没能保存");
 };
 
 /* ---------- 录入 ---------- */
@@ -544,7 +542,7 @@ $("addSave").onclick = async () => {
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
   const r = await api("yh/add", { content: name, meaning, scope });
-  showAlert(r.message);
+  showAlert(r.message || "已录入", "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
 
@@ -642,7 +640,7 @@ $("setSave").onclick = async () => {
       : el.value;
   });
   const r = await api("yh/config", payload);
-  showAlert(r.message || "已保存", "已保存");
+  showAlert((r.message ? r.message + "。" : "") + "配置已写入后台；学习频率、模型等改动建议重载插件后生效。", "设置已保存");
   if (r.status === "ok"){
     $("setMask").classList.remove("on");
     reload();
@@ -687,11 +685,11 @@ async function bulkAction(action){
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
   const r = await api("yh/bulk", { action, ids });
   if (r.status !== "ok"){
-    showAlert(r.message || "操作失败", "操作失败");
+    showAlert(r.message || "服务器未返回原因，请查看 AstrBot 日志", "批量操作失败");
     showAlert(r.message || "操作失败", "批量操作失败");
     return;
   }
-  showAlert(r.message || "操作完成", "操作完成");
+  showAlert(r.message || "操作完成", "完成");
   reload();
 }
 
