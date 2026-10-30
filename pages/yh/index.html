@@ -179,6 +179,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
     <div class="field"><label>内容</label><textarea id="editMeaning" maxlength="500"></textarea></div>
     <div class="field"><label>归属</label><select id="editScope"></select></div>
     <div class="modal-foot">
+      <div id="editErr" style="display:none;color:var(--danger);font-size:12px;margin-bottom:8px;line-height:1.5"></div>
       <button class="link" id="editCancel">取消</button>
       <button class="primary" id="editSave">确认</button>
     </div>
@@ -222,9 +223,9 @@ const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: 
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
   selected: new Set() };
 
-function toast(msg){
+function toast(msg, ms = 2600){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 2600);
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), ms);
 }
 window.addEventListener("error", e => toast("页面脚本出错：" + (e.message || "未知")));
 window.addEventListener("unhandledrejection", e =>
@@ -487,9 +488,17 @@ $("editSave").onclick = async () => {
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
   if (!name || !meaning) return toast("词条名和内容都不能为空");
+  const err = $("editErr");
+  err.style.display = "none";
   const r = await api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
-  toast(r.message);
-  if (r.status === "ok"){ $("editMask").classList.remove("on"); editing = null; reload(); }
+  if (r.status === "ok"){
+    toast(r.message);
+    $("editMask").classList.remove("on"); editing = null; reload();
+    return;
+  }
+  err.textContent = r.message || "保存失败";
+  err.style.display = "block";
+  toast(r.message, 5000);
 };
 
 /* ---------- 录入 ---------- */

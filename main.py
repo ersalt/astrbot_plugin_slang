@@ -531,6 +531,10 @@ class JargonLite(Star):
 
         rec = self.store.update(table, str(cur["id"]),
                                 name or None, meaning[:500], scope)
+        if rec and new_scope == cur["scope"] and new_name == cur["name"]:
+            where = "全局" if not new_scope else f"群 {new_scope}"
+            return {"status": "ok", "message": f"「{new_name}」归属未变（{where}），内容已更新",
+                    "data": {}}
         return {"status": "ok" if rec else "error",
                 "message": f"「{new_name}」已更新" if rec else "改不成，可能重名",
                 "data": {}}
@@ -824,8 +828,22 @@ class JargonLite(Star):
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh promote 名称")
             return
-        yield event.plain_result(
-            "已提升为全局词条。" if self.store.set_scope(tokens[1], "") else "没找到这个条目。")
+        name = tokens[1]
+        rec = self.store._find("jargon", name, None)
+        if not rec:
+            yield event.plain_result("没找到这个条目。")
+            return
+        if not rec["scope"]:
+            yield event.plain_result("这条已经是全局词条了。")
+            return
+        conflict = self.store._find("jargon", name, "")
+        if conflict and conflict["id"] != rec["id"]:
+            yield event.plain_result(
+                f"全局已有同名词条「{name}」（{conflict['meaning'][:20]}…，id {conflict['id']}），"
+                "请先处理那条。")
+            return
+        self.store.set_scope(str(rec["id"]), "")
+        yield event.plain_result("已提升为全局词条。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("stat")
