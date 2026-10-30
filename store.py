@@ -418,7 +418,7 @@ class JargonStore:
             if only != "jargon":
                 prow = self._find("pending", key, scope, source)
                 if prow:
-                    clash = self._find("jargon", prow["name"], prow["scope"], prow["source"])
+                    clash = self._find("jargon", prow["name"], prow["scope"])
                     if clash:
                         return {"action": "conflict_jargon", "conflict": clash}
                     self._promote(prow)
@@ -428,7 +428,7 @@ class JargonStore:
             if only != "pending":
                 jrow = self._find("jargon", key, scope, source)
                 if jrow:
-                    clash = self._find("pending", jrow["name"], jrow["scope"], jrow["source"])
+                    clash = self._find("pending", jrow["name"], jrow["scope"])
                     if clash:
                         return {"action": "conflict_pending", "conflict": clash}
                     self._demote(jrow)

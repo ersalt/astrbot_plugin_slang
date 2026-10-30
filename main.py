@@ -615,9 +615,11 @@ class JargonLite(Star):
                                "两条都保留，请先处理待审那条",
                     "data": {}}
         if action == "conflict_jargon":
+            src_name = "手动" if clash.get("source") == "manual" else "自动"
             return {"status": "error",
-                    "message": f"通过失败：黑话库已有同名同群条目（{excerpt}…，id {clash.get('id')}），"
-                               "两条都保留，请先处理黑话库那条",
+                    "message": f"通过失败：黑话库已有同名的{src_name}条目"
+                               f"（{excerpt}…，id {clash.get('id')}），通过会产生两条同名，"
+                               "请先处理黑话库那条",
                     "data": {}}
         return {"status": "error", "message": f"没找到「{content}」", "data": {}}
 
