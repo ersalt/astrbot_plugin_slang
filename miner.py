@@ -78,6 +78,14 @@ def _clean_meaning(s: str, limit: int) -> str:
     return s
 
 
+def parse_words(raw) -> set[str]:
+    """拒绝词表解析：中英文逗号、顿号、分号、空白都算分隔符。"""
+    if not raw:
+        return set()
+    parts = re.split(r"[,，、;；\s]+", str(raw))
+    return {p.strip().casefold() for p in parts if p.strip()}
+
+
 class Miner:
     def __init__(self, context, store, config):
         self.context = context
@@ -85,6 +93,7 @@ class Miner:
         self.config = config
         self.max_meaning = int(config.get("max_meaning_chars", 200) or 200)
         self.extract_max = int(config.get("extract_max", 5) or 5)
+        self.reject_words = parse_words(config.get("reject_words", ""))
 
     def _provider(self, umo):
         pid = str(self.config.get("provider_id") or "").strip()
@@ -145,6 +154,17 @@ class Miner:
             })
         if not cleaned:
             return 0
+
+        if self.reject_words:
+            kept = []
+            for it in cleaned:
+                if it["name"].casefold() in self.reject_words:
+                    logger.info(f"[slang] {scope} 命中拒绝词，丢弃：{it['name']}")
+                    continue
+                kept.append(it)
+            cleaned = kept
+            if not cleaned:
+                return 0
 
         verdicts = await self._review(umo, cleaned)
         saved = 0

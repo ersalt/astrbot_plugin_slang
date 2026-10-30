@@ -73,5 +73,10 @@
     "description": "每天几点几分检查同步，HH:MM",
     "type": "string",
     "default": "04:30"
+  },
+  "reject_words": {
+    "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
+    "type": "string",
+    "default": ""
   }
 }

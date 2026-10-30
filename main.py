@@ -30,7 +30,7 @@ except Exception:  # noqa: BLE001
     TextPart = None
 
 from .matcher import format_hint, format_wiki, match, match_wiki
-from .miner import Miner
+from .miner import Miner, parse_words
 from .store import JargonStore
 
 
@@ -630,6 +630,7 @@ class JargonLite(Star):
         self.blacklist = self._parse_list(self.config.get("blacklist_groups", ""))
         try:
             self.miner.extract_max = max(1, int(self.config.get("extract_max", 5)))
+            self.miner.reject_words = parse_words(self.config.get("reject_words", ""))
         except Exception:  # noqa: BLE001
             pass
 

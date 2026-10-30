@@ -55,7 +55,7 @@
 
 ## 配置
 
-后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 13 项。
+后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 14 项。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -68,6 +68,7 @@
 | `provider_id` | 空 | 提取用的模型，留空用当前会话模型 |
 | `listen_private` | false | 是否也学私聊 |
 | `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
+| `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。分隔符同黑名单 |
 | `wiki_enable` | true | 启用梗百科；关掉后隐藏侧栏入口，也不参与注入 |
 | `wiki_sync_enable` | false | 是否定时同步梗Wiki |
 | `wiki_sync_interval_days` | 7 | 同步间隔（天，1–365） |
@@ -135,7 +136,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 ## 已知限制
 
 - 关键词是子串匹配，半截词要靠 `aliases` 补
-- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`；计划加「拒绝词表」硬过滤，见 [TODO.md](./TODO.md)
+- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`；可用 `reject_words` 硬过滤掉固定不收的词
 - 模型自审可能误放行；不放心就把 `auto_learn` 关掉，只手动录入
 - 每条含义最多 `max_meaning_chars` 字、单次最多 `inject_max` 条
 - 梗库只存摘要，没有正文和「怎么接」，需要更详细的用法得另做
