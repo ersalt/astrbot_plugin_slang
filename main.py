@@ -86,6 +86,9 @@ class JargonLite(Star):
         self._wiki_task = None
         self._wiki_running = False
         self._web_registered = False
+        self._inject = {"calls": 0, "hits": 0, "empty": 0,
+                        "blocked": 0, "no_hit": 0, "last": ""}
+        self._inject_seen = False
         self._register_web_api()
 
     @staticmethod
@@ -197,11 +200,14 @@ class JargonLite(Star):
         return event.unified_msg_origin or ""
 
     def _blocked(self, event: AstrMessageEvent) -> bool:
-        scope = self._scope(event)
-        if not scope:
-            return True
-        if event.unified_msg_origin.startswith("aiocqhttp:GroupMessage:"):
-            return scope in self.blacklist
+        """群消息看黑名单，非群消息看私聊开关。
+
+        不能用 unified_msg_origin 的平台段判断：适配器显示名可能是
+        「大肥鱼」而不是「aiocqhttp」，会导致所有群消息被误判成私聊。
+        """
+        group_id = getattr(getattr(event, "message_obj", None), "group_id", None)
+        if group_id:
+            return str(group_id) in self.blacklist
         return not self.listen_private
 
     # ---------------- 学习侧 ----------------
@@ -255,10 +261,19 @@ class JargonLite(Star):
 
     @filter.on_llm_request()
     async def inject(self, event: AstrMessageEvent, req):
-        if not self.enabled or self._blocked(event):
+        self._inject["calls"] += 1
+        if not self._inject_seen:
+            self._inject_seen = True
+            logger.info("[slang] 注入钩子已触发（之后按命中情况记录 INFO）")
+        if not self.enabled:
+            self._inject["blocked"] += 1
+            return
+        if self._blocked(event):
+            self._inject["blocked"] += 1
             return
         text = (getattr(req, "prompt", "") or "").strip()
         if not text:
+            self._inject["empty"] += 1
             return
         hint, tag = "", ""
         try:
@@ -280,12 +295,15 @@ class JargonLite(Star):
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"[slang] 梗库查询失败: {exc}")
         if not hint:
+            self._inject["no_hit"] += 1
             return
         if TextPart is None:
             logger.warning("[slang] 当前 AstrBot 不支持临时上下文，跳过注入")
             return
         req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
-        logger.debug(f"[slang] 注入{tag}")
+        self._inject["hits"] += 1
+        self._inject["last"] = f"{tag} @ {time.strftime('%H:%M:%S')}"
+        logger.info(f"[slang] 注入 {tag}")
 
     # ---------------- WebUI ----------------
 
@@ -681,14 +699,19 @@ class JargonLite(Star):
         return text.split()[1:] if len(text.split()) > 1 else []
 
     @staticmethod
-    def _fmt(rec: dict) -> str:
+    def _clip(text: str, limit: int) -> str:
+        text = text or ""
+        return text if len(text) <= limit else text[:limit].rstrip("，。；; ") + "…"
+
+    @classmethod
+    def _fmt(cls, rec: dict) -> str:
         name = rec.get("content") or rec.get("name") or ""
         meaning = rec.get("meaning") or ""
         scope = rec.get("scope") or ""
         source = rec.get("source") or ""
         where = "全局" if not scope else f"群{scope}"
         src = "手动" if source == "manual" else "自动"
-        return f"{name}：{meaning[:40]} [{src} {where} ×{rec.get('count', 1)}]"
+        return f"{name}：{cls._clip(meaning, 40)} [{src} {where} ×{rec.get('count', 1)}]"
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("list")
@@ -817,9 +840,13 @@ class JargonLite(Star):
     async def yh_stat(self, event: AstrMessageEvent):
         """查看统计。"""
         s = self.svc.stats()
+        d = self._inject
         yield event.plain_result(
             f"黑话 {s['total']} 条（手动 {s['manual']} · 自动 {s['auto']}）\n"
-            f"待审 {s['pending']} · 梗库 {self.store.wiki_count()}")
+            f"待审 {s['pending']} · 梗库 {self.store.wiki_count()}\n"
+            f"注入：调用 {d['calls']} · 命中 {d['hits']} · 空文本 {d['empty']} "
+            f"· 无命中 {d['no_hit']} · 跳过 {d['blocked']}\n"
+            f"最近：{d['last'] or '无'}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("check")
@@ -835,6 +862,7 @@ class JargonLite(Star):
             yield event.plain_result("这句话不会命中任何词条。")
             return
         yield event.plain_result(
-            f"命中 {len(hits)} 条：\n" + "\n".join(
-                f"[{SIDE.get(h['table'], h['table'])}] {h['name']}：{h['meaning'][:40]}"
+            f"命中 {len(hits)} 条（聊天只显示前 40 字，注入按 max_meaning_chars 截断）：\n"
+            + "\n".join(
+                f"[{SIDE.get(h['table'], h['table'])}] {h['name']}：{self._clip(h['meaning'], 40)}"
                 for h in hits))
