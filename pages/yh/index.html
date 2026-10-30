@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>黑话审核台 · lite</title>
@@ -227,6 +229,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
+const PAGE_BUILD = "v1.3.3";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -411,7 +414,7 @@ async function ping(){
     const r = await api("yh/ping", {});
     if (r.status === "ok"){
       $("diag").textContent =
-        `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · build ${r.data.build || "?"}`;
+        `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · 页面 ${PAGE_BUILD}`;
     } else {
       $("diag").textContent = "自检失败：" + (r.message || "");
     }
@@ -503,10 +506,24 @@ $("editSave").onclick = async () => {
   if (!editing) return;
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
-  if (!name || !meaning) return toast("词条名和内容都不能为空");
+  if (!name || !meaning){
+    toast("词条名和内容都不能为空", 4000);
+    showAlert("词条名和内容都不能为空", "没法保存");
+    return;
+  }
   const err = $("editErr");
-  err.style.display = "none";
-  const r = await api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
+  if (err) err.style.display = "none";
+  let r;
+  try {
+    r = await Promise.race([
+      api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), 10000)),
+    ]);
+  } catch (e) {
+    const msg = "请求失败：" + ((e && e.message) || e);
+    toast(msg, 5000); showAlert(msg, "没能保存");
+    return;
+  }
   if (r.status === "ok"){
     toast(r.message);
     $("editMask").classList.remove("on"); editing = null; reload();
