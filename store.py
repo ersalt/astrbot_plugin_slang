@@ -280,6 +280,8 @@ class JargonStore:
     # ---------- 访问器 ----------
 
     def repo(self, table: str) -> Repo:
+        if table not in TABLES:
+            raise ValueError(f"unknown table: {table!r}")
         return self.repos[table]
 
     @staticmethod

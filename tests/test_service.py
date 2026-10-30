@@ -51,6 +51,12 @@ class TestManualCrud(Base):
         self.svc.delete("manual", "肥鱼", "")
         self.assertIsNone(self.store.repo("manual").find("肥鱼", ""))
 
+    def test_unknown_table_rejected(self):
+        with self.assertRaises(SlangError):
+            self.svc.update("", "A", "", meaning="x")
+        with self.assertRaises(SlangError):
+            self.svc.delete("", "A", "")
+
     def test_duplicate_manual_rejected(self):
         self.svc.add_manual("重复", "第一版", scope="g1")
         with self.assertRaises(SlangError):

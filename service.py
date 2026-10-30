@@ -61,7 +61,7 @@ class SlangService:
     # ---------- 索引 ----------
 
     def _rebuild(self):
-        self.index.build({t: self.store.repo(t).all() for t in APPROVED})
+        self.index.build({t: self._repo(t).all() for t in APPROVED})
         self._dirty = False
 
     def match(self, text: str, scope: str = "", limit: int = 3) -> list[dict]:
@@ -72,6 +72,11 @@ class SlangService:
     def invalidate(self):
         self._dirty = True
 
+    def _repo(self, table: str):
+        if table not in TABLES:
+            raise SlangError("未知的表（页面可能还是旧版本），请 Ctrl+F5 刷新后重试")
+        return self.store.repos[table]
+
     # ---------- 写入 ----------
 
     def add_manual(self, name: str, meaning: str, scope: str = "",
@@ -81,10 +86,10 @@ class SlangService:
         if not name or not meaning:
             raise SlangError("词条名和内容都不能为空")
         for t in ("manual", "manual_pending"):
-            if self.store.repo(t).find(name, scope):
+            if self._repo(t).find(name, scope):
                 raise SlangError(
                     f"「{name}」在该作用域已存在（{SIDE[t]}），未覆盖。要改内容请用「修改」。")
-        rec = self.store.repo("manual").insert({
+        rec = self._repo("manual").insert({
             "name": name, "meaning": meaning, "scope": scope,
             "aliases": aliases, "evidence": '["手动录入"]',
             "contributor": "手动录入",
@@ -100,7 +105,7 @@ class SlangService:
         if not name or not meaning:
             return {}
         table = "auto" if approved else "auto_pending"
-        repo = self.store.repo(table)
+        repo = self._repo(table)
         existing = repo.find(name, scope)
         if existing:
             repo.update(existing["id"],
@@ -119,7 +124,7 @@ class SlangService:
 
     def update(self, table: str, old_name: str, old_scope: str,
                name: str = "", meaning: str = "", scope: str | None = None) -> dict:
-        repo = self.store.repo(table)
+        repo = self._repo(table)
         rec = repo.find(old_name, old_scope)
         if not rec:
             raise SlangError(f"没找到「{old_name}」")
@@ -142,7 +147,7 @@ class SlangService:
         return out
 
     def delete(self, table: str, name: str, scope: str = "") -> None:
-        repo = self.store.repo(table)
+        repo = self._repo(table)
         rec = repo.find(name, scope)
         if not rec:
             raise SlangError(f"没找到「{name}」")
@@ -154,23 +159,23 @@ class SlangService:
     def approve(self, table: str, name: str, scope: str = "") -> str:
         if table not in TABLES:
             raise SlangError("未知的表")
-        src = self.store.repo(table).find(name, scope)
+        src = self._repo(table).find(name, scope)
         if not src:
             raise SlangError(f"没找到「{name}」")
         tgt = target_of(table)
-        clash = self.store.repo(tgt).find(name, scope)
+        clash = self._repo(tgt).find(name, scope)
         if clash:
             raise SlangError(
                 f"操作失败：{SIDE[tgt]}已有同名同群条目"
                 f"（{(clash['meaning'] or '')[:20]}…），两条都保留，请先处理那条")
-        self.store.repo(tgt).insert({
+        self._repo(tgt).insert({
             "name": src["name"], "aliases": src["aliases"],
             "meaning": src["meaning"], "scope": src["scope"],
             "count": src["count"], "auto_note": src["auto_note"],
             "evidence": src["evidence"], "contributor": src["contributor"],
             "created_at": src["created_at"],
         })
-        self.store.repo(table).delete(src["id"])
+        self._repo(table).delete(src["id"])
         self.invalidate()
         return "approved" if table in PENDING else "pending"
 
@@ -203,13 +208,13 @@ class SlangService:
                      sort: str = "recent"):
         scope_arg = scope if scoped else None
         if bucket in ("manual", "auto"):
-            total, rows = self.store.repo(bucket).list_page(
+            total, rows = self._repo(bucket).list_page(
                 search=search, scope=scope_arg, page=page, size=size, sort=sort)
             return total, [public(r, bucket) for r in rows]
         if bucket == "pending":
             rows = []
             for t in PENDING:
-                for r in self.store.repo(t).all():
+                for r in self._repo(t).all():
                     if scope_arg is not None and (r["scope"] or "") != scope_arg:
                         continue
                     if search and search not in r["name"] and search not in r["meaning"]:
@@ -226,18 +231,18 @@ class SlangService:
     def pending_scopes(self) -> list[dict]:
         merged: dict[str, int] = {}
         for t in PENDING:
-            for s in self.store.repo(t).scopes():
+            for s in self._repo(t).scopes():
                 merged[s["scope"]] = merged.get(s["scope"], 0) + s["count"]
         return [{"scope": k, "count": v} for k, v in merged.items()]
 
     def tree_counts(self):
-        manual = self.store.repo("manual").count()
-        auto = self.store.repo("auto").count()
-        pending = sum(self.store.repo(t).count() for t in PENDING)
+        manual = self._repo("manual").count()
+        auto = self._repo("auto").count()
+        pending = sum(self._repo(t).count() for t in PENDING)
         return manual, auto, pending
 
     def scopes_of(self, table: str) -> list[dict]:
-        return self.store.repo(table).scopes()
+        return self._repo(table).scopes()
 
     def stats(self) -> dict:
         manual, auto, pending = self.tree_counts()
@@ -249,7 +254,7 @@ class SlangService:
     def find_any(self, name: str) -> tuple[str, dict] | None:
         best = None
         for t in TABLES:
-            for r in self.store.repo(t).all():
+            for r in self._repo(t).all():
                 if r["name"] == name and (best is None or r["updated_at"] > best[1]["updated_at"]):
                     best = (t, r)
         return best
@@ -257,6 +262,6 @@ class SlangService:
     def all_approved(self, scope: str | None = None) -> list[dict]:
         out = []
         for t in APPROVED:
-            for r in self.store.repo(t).all(scope):
+            for r in self._repo(t).all(scope):
                 out.append(public(r, t))
         return out

@@ -30,7 +30,7 @@ except Exception:  # noqa: BLE001
 from .matcher import format_hint, format_wiki, match_wiki
 from .miner import Miner, parse_words
 from .service import SIDE, SlangError, SlangService
-from .store import JargonStore
+from .store import TABLES, JargonStore
 
 
 def _read_version(default: str = "0.0.0") -> str:
@@ -336,6 +336,20 @@ class JargonLite(Star):
         return self.svc.stats()
 
     @staticmethod
+    def _resolve_table(p: dict) -> str:
+        table = str(p.get("table") or "").strip()
+        if table in TABLES:
+            return table
+        # 兼容旧页面：没有 table 时用 source + pending 推断
+        source = str(p.get("source") or "").strip()
+        pending = bool(p.get("pending"))
+        if source not in ("manual", "ai"):
+            source = "manual" if p.get("from_jargon") is False and p.get("source") == "manual" else "ai"
+        if pending:
+            return "manual_pending" if source == "manual" else "auto_pending"
+        return "manual" if source == "manual" else "auto"
+
+    @staticmethod
     def _error(where: str, exc: Exception) -> dict:
         try:
             logger.error(f"[slang] {where}失败: {exc}", exc_info=True)
@@ -462,7 +476,7 @@ class JargonLite(Star):
 
     async def api_update(self):
         p = await self._payload()
-        table = str(p.get("table") or "").strip()
+        table = self._resolve_table(p)
         old_name = str(p.get("old_name") or p.get("content") or "").strip()
         old_scope = str(p.get("old_scope") or "").strip()
         name = str(p.get("name") or "").strip()
@@ -480,7 +494,7 @@ class JargonLite(Star):
 
     async def api_delete(self):
         p = await self._payload()
-        table = str(p.get("table") or "").strip()
+        table = self._resolve_table(p)
         name = str(p.get("name") or p.get("content") or "").strip()
         scope = str(p.get("scope") or "").strip()
         try:
@@ -493,7 +507,7 @@ class JargonLite(Star):
 
     async def api_approve(self):
         p = await self._payload()
-        table = str(p.get("table") or "").strip()
+        table = self._resolve_table(p)
         name = str(p.get("name") or p.get("content") or "").strip()
         scope = str(p.get("scope") or "").strip()
         try:
@@ -528,7 +542,7 @@ class JargonLite(Star):
 
     async def api_toggle_global(self):
         p = await self._payload()
-        table = str(p.get("table") or "").strip()
+        table = self._resolve_table(p)
         name = str(p.get("name") or p.get("content") or "").strip()
         scope = str(p.get("scope") or "").strip()
         try:
