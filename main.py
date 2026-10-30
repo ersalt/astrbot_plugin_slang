@@ -200,11 +200,14 @@ class JargonLite(Star):
         return event.unified_msg_origin or ""
 
     def _blocked(self, event: AstrMessageEvent) -> bool:
-        scope = self._scope(event)
-        if not scope:
-            return True
-        if event.unified_msg_origin.startswith("aiocqhttp:GroupMessage:"):
-            return scope in self.blacklist
+        """群消息看黑名单，非群消息看私聊开关。
+
+        不能用 unified_msg_origin 的平台段判断：适配器显示名可能是
+        「大肥鱼」而不是「aiocqhttp」，会导致所有群消息被误判成私聊。
+        """
+        group_id = getattr(getattr(event, "message_obj", None), "group_id", None)
+        if group_id:
+            return str(group_id) in self.blacklist
         return not self.listen_private
 
     # ---------------- 学习侧 ----------------
