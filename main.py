@@ -2,40 +2,38 @@
 # SPDX-License-Identifier: MIT
 """群语汇：群黑话学习与注入。
 
-设计要点：
-- 消息缓冲落 SQLite，重启不丢，不靠内存计数
-- 提取后由模型自审：有把握进黑话库，没把握进待审
-- 注入走关键词命中，最多 inject_max 条，纯机械匹配，不调模型
-- 注入内容作为临时 user content 追加，不改 system prompt
+四张词条表（manual/auto/manual_pending/auto_pending）+ 自然键操作；
+注入走内存关键词索引，不再每次全表读取。
 """
 
 import asyncio
 import json
 import pathlib
 import re
+import shutil
 import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
 
-try:  # 旧版 AstrBot 无 web 模块
+try:
     from astrbot.api.web import request as web_request
 except Exception:  # noqa: BLE001
     web_request = None
 
-try:  # 临时上下文用，旧版没有则该功能降级
+try:
     from astrbot.core.agent.message import TextPart
 except Exception:  # noqa: BLE001
     TextPart = None
 
-from .matcher import format_hint, format_wiki, match, match_wiki
+from .matcher import format_hint, format_wiki, match_wiki
 from .miner import Miner, parse_words
-from .store import JargonStore
+from .service import SIDE, SlangError, SlangService
+from .store import TABLES, JargonStore
 
 
 def _read_version(default: str = "0.0.0") -> str:
-    """版本号只维护 metadata.yaml 一处，避免两处不一致。"""
     try:
         text = pathlib.Path(__file__).with_name("metadata.yaml").read_text(encoding="utf-8")
     except Exception:  # noqa: BLE001
@@ -75,8 +73,10 @@ class JargonLite(Star):
 
         data_dir = StarTools.get_data_dir("astrbot_plugin_slang")
         data_dir.mkdir(parents=True, exist_ok=True)
+        self._migrate_old_data_dir(data_dir)
         self.store = JargonStore(str(data_dir / "jargon.db"))
-        self.miner = Miner(context, self.store, self.config)
+        self.svc = SlangService(self.store)
+        self.miner = Miner(context, self.svc, self.config)
         try:
             self._wiki_keys = self.store.wiki_keys()
         except Exception:  # noqa: BLE001
@@ -88,17 +88,39 @@ class JargonLite(Star):
         self._web_registered = False
         self._register_web_api()
 
+    @staticmethod
+    def _migrate_old_data_dir(data_dir: pathlib.Path):
+        """从更早的插件目录名接管数据库（1.0 之前叫 jargon_lite）。"""
+        target = data_dir / "jargon.db"
+        if target.exists():
+            return
+        for name in ("astrbot_plugin_jargon_lite", "astrbot_plugin_jargon"):
+            old = data_dir.parent / name
+            src = old / "jargon.db"
+            if not src.exists():
+                continue
+            try:
+                for suffix in ("", "-wal", "-shm"):
+                    s = old / f"jargon.db{suffix}"
+                    if s.exists():
+                        shutil.copy2(s, data_dir / f"jargon.db{suffix}")
+                logger.info(f"[slang] 已从旧目录 {name} 迁移数据库")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[slang] 旧目录迁移失败: {exc}")
+
     async def initialize(self):
         try:
             self._wiki_keys = self.store.wiki_keys()
         except Exception:  # noqa: BLE001
             self._wiki_keys = []
-        s = self.store.stats()
+        s = self.svc.stats()
         logger.info(
-            f"[slang] 已加载：黑话 {s['total']} 条"
-            f"（手动 {s['manual']}，自动 {s['auto']}），待审 {s['pending']}"
-            f"，梗库 {len(self._wiki_keys)} 条")
+            f"[slang] 已加载：黑话 {s['total']} 条（手动 {s['manual']}，自动 {s['auto']}），"
+            f"待审 {s['pending']}，梗库 {len(self._wiki_keys)} 条")
         self._wiki_task = asyncio.create_task(self._wiki_loop())
+
+    # ---------------- 梗库定时同步 ----------------
 
     async def _wiki_loop(self):
         while True:
@@ -126,8 +148,8 @@ class JargonLite(Star):
         self._wiki_running = True
         try:
             from .wikinow import sync as sync_wiki
-            res = await asyncio.to_thread(
-                sync_wiki, self.store, 30, 0.5, 0, False, logger.info)
+            res = await asyncio.to_thread(sync_wiki, self.store, 30, 0.5, 0, False,
+                                          logger.info)
             self._wiki_keys = self.store.wiki_keys()
             logger.info(f"[slang] 梗库自动同步完成: {res}")
         except Exception as exc:  # noqa: BLE001
@@ -150,7 +172,6 @@ class JargonLite(Star):
 
     @staticmethod
     def _split_list(raw) -> list[str]:
-        """逗号/顿号/分号/空白都算分隔符，中英文都支持。"""
         if not raw:
             return []
         items = raw if isinstance(raw, (list, tuple, set)) else \
@@ -173,14 +194,15 @@ class JargonLite(Star):
                 return str(gid)
         except Exception:  # noqa: BLE001
             pass
-        umo = event.unified_msg_origin or ""
-        return umo.split(":")[-1] if umo else ""
+        return event.unified_msg_origin or ""
 
     def _blocked(self, event: AstrMessageEvent) -> bool:
-        if not self.blacklist:
-            return False
-        sid = self._scope(event)
-        return sid in self.blacklist
+        scope = self._scope(event)
+        if not scope:
+            return True
+        if event.unified_msg_origin.startswith("aiocqhttp:GroupMessage:"):
+            return scope in self.blacklist
+        return not self.listen_private
 
     # ---------------- 学习侧 ----------------
 
@@ -190,8 +212,7 @@ class JargonLite(Star):
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def collect_private(self, event: AstrMessageEvent):
-        if self.listen_private:
-            await self._collect(event)
+        await self._collect(event)
 
     async def _collect(self, event: AstrMessageEvent):
         if not self.enabled or not self.auto_learn:
@@ -203,20 +224,17 @@ class JargonLite(Star):
         text = (event.get_message_str() or "").strip()
         if not text or text.startswith("/"):
             return
-
         umo = event.unified_msg_origin or ""
         scope = self._scope(event)
         try:
             sender = event.get_sender_name() or event.get_sender_id()
         except Exception:  # noqa: BLE001
             sender = event.get_sender_id()
-
         count = self.store.buffer_add(umo, sender, text)
         if count < self.learn_frequency:
             return
         if umo in self._learning:
             return
-
         messages = self.store.buffer_take(umo, self.learn_frequency)
         self.store.buffer_drop(umo)
         self._learning.add(umo)
@@ -237,22 +255,22 @@ class JargonLite(Star):
 
     @filter.on_llm_request()
     async def inject(self, event: AstrMessageEvent, req):
-        if not self.enabled:
-            return
-        if self._blocked(event):
+        if not self.enabled or self._blocked(event):
             return
         text = (getattr(req, "prompt", "") or "").strip()
         if not text:
             return
-        entries = self.store.eligible(self._scope(event))
-        hits = match(entries, text, limit=self.inject_max) if entries else []
         hint, tag = "", ""
-        if hits:
-            hint = format_hint(hits, self.max_meaning,
+        try:
+            entries = self.svc.match(text, self._scope(event), self.inject_max)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[slang] 索引匹配失败: {exc}")
+            entries = []
+        if entries:
+            hint = format_hint(entries, self.max_meaning,
                                budget=self.max_meaning * self.inject_max + 120)
             if hint:
-                tag = "黑话 " + ", ".join(h.get("name", "") for h in hits)
-        # 黑话没命中，再看梗库（最多 1 条，避免抢上下文）
+                tag = "黑话 " + ", ".join(e.get("name", "") for e in entries)
         if not hint and self.wiki_enable and self._wiki_keys:
             try:
                 titles = match_wiki(self._wiki_keys, text, limit=1)
@@ -266,11 +284,10 @@ class JargonLite(Star):
         if TextPart is None:
             logger.warning("[slang] 当前 AstrBot 不支持临时上下文，跳过注入")
             return
-        # 作为临时 user content 追加，不修改 system_prompt，避免破坏缓存
         req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
         logger.debug(f"[slang] 注入{tag}")
 
-    # ---------------- WebUI 审核台 ----------------
+    # ---------------- WebUI ----------------
 
     def _register_web_api(self):
         if self._web_registered or web_request is None:
@@ -285,7 +302,7 @@ class JargonLite(Star):
             ("groups", self.api_groups, ["GET", "POST"], "群列表"),
             ("tree", self.api_tree, ["GET", "POST"], "侧栏树"),
             ("add", self.api_add, ["POST"], "手动录入"),
-            ("update", self.api_update, ["POST"], "改含义"),
+            ("update", self.api_update, ["POST"], "改词条"),
             ("delete", self.api_delete, ["POST"], "删除"),
             ("approve", self.api_approve, ["POST"], "通过/退回"),
             ("bulk", self.api_bulk, ["POST"], "批量审核"),
@@ -297,65 +314,61 @@ class JargonLite(Star):
             try:
                 self.context.register_web_api(f"{prefix}/{name}", handler, methods, desc)
             except Exception as exc:  # noqa: BLE001
-                logger.error(f"[slang] 注册路由失败 {name}: {exc}")
-                return
+                logger.warning(f"[slang] 注册接口 {name} 失败: {exc}")
         self._web_registered = True
 
     @staticmethod
     async def _payload() -> dict:
-        data = {}
+        if web_request is None:
+            return {}
         try:
-            data = await web_request.json(default={}) or {}
-        except TypeError:
-            try:
-                data = await web_request.json() or {}
-            except Exception:  # noqa: BLE001
-                data = {}
-        except Exception:  # noqa: BLE001
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        try:
-            for key in ("content", "meaning", "search", "kind", "page", "size"):
-                val = web_request.query.get(key)
-                if val is not None and key not in data:
-                    data[key] = val
+            data = await web_request.json(default={})
+            if isinstance(data, dict):
+                return data
         except Exception:  # noqa: BLE001
             pass
-        return data
-
-    def _serialize(self, rec: dict) -> dict:
-        return {
-            "id": rec["id"],
-            "content": rec["name"],
-            "meaning": rec["meaning"],
-            "count": rec["count"],
-            "is_global": rec["scope"] == "",
-            "created_by": "manual" if rec["source"] == "manual" else "ai",
-            "contributor": rec.get("contributor") or "",
-            "scopes": {rec["scope"]: rec["count"]} if rec["scope"] else {},
-            "evidence": self._json_list(rec["evidence"]),
-            "auto_note": rec["auto_note"],
-            "source": rec["source"],
-            "scope": rec["scope"],
-            "updated_at": rec["updated_at"],
-        }
-
-    @staticmethod
-    def _json_list(raw) -> list:
         try:
-            data = json.loads(raw or "[]")
-            return data if isinstance(data, list) else []
+            return dict(web_request.query) if web_request.query else {}
         except Exception:  # noqa: BLE001
-            return []
+            return {}
 
     def _stats_web(self) -> dict:
-        s = self.store.stats()
-        return {"total": s["total"], "learned": s["auto"], "manual": s["manual"],
-                "pending": s["pending"], "by_category": s["by_category"]}
+        return self.svc.stats()
+
+    @staticmethod
+    def _resolve_table(p: dict) -> str:
+        table = str(p.get("table") or "").strip()
+        if table in TABLES:
+            return table
+        # 兼容旧页面：只接受明确的 source + pending 组合，猜不出返回空
+        if "pending" not in p:
+            return ""
+        source = str(p.get("source") or p.get("old_source") or "").strip()
+        if source not in ("manual", "ai"):
+            return ""
+        if bool(p.get("pending")):
+            return "manual_pending" if source == "manual" else "auto_pending"
+        return "manual" if source == "manual" else "auto"
+
+    def _resolve_edit_table(self, name: str, scope: str, source: str = "") -> str:
+        """旧页面编辑没有 table：按自然键在四张表里找，唯一命中才改。"""
+        cands = [t for t in TABLES if self.store.repo(t).find(name, scope)]
+        if source in ("manual", "ai"):
+            want = "manual" if source == "manual" else "auto"
+            cands = [t for t in cands if t.startswith(want)]
+        return cands[0] if len(cands) == 1 else ""
+
+    @staticmethod
+    def _error(where: str, exc: Exception) -> dict:
+        try:
+            logger.error(f"[slang] {where}失败: {exc}", exc_info=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"status": "error",
+                "message": f"{where}失败：{type(exc).__name__}: {exc}",
+                "data": {}}
 
     async def _group_names(self) -> dict:
-        """通过 AstrBot 的 DB 接口读取群名，读不到就返回空。"""
         try:
             aliases = await self.context.get_db().get_umo_aliases()
         except Exception:  # noqa: BLE001
@@ -373,63 +386,50 @@ class JargonLite(Star):
         return out
 
     async def api_groups(self):
-        _, rows = self.store.query("all", size=2000)
-        counts: dict[str, int] = {}
-        for r in rows:
-            if r["scope"]:
-                counts[r["scope"]] = counts.get(r["scope"], 0) + 1
         names = await self._group_names()
-        data = [{"scope": s, "name": names.get(s, ""), "count": n}
-                for s, n in counts.items()]
+        merged: dict[str, int] = {}
+        for t in ("manual", "auto", "manual_pending", "auto_pending"):
+            for s in self.svc.scopes_of(t):
+                merged[s["scope"]] = merged.get(s["scope"], 0) + s["count"]
+        data = [{"scope": k, "name": names.get(k, ""), "count": v}
+                for k, v in merged.items()]
         data.sort(key=lambda x: -x["count"])
         return {"status": "ok", "message": "", "data": {"groups": data}}
 
     async def api_ping(self):
-        """页面自检：确认路由与数据库是否正常。"""
         try:
-            s = self.store.stats()
-            cols = [r[1] for r in self.store._conn.execute("PRAGMA table_info(jargon)")]
-            build = time.strftime(
-                "%m-%d %H:%M:%S",
-                time.localtime(pathlib.Path(__file__).stat().st_mtime))
+            s = self.svc.stats()
+            build = time.strftime("%m-%d %H:%M:%S",
+                                  time.localtime(pathlib.Path(__file__).stat().st_mtime))
             return {"status": "ok", "message": "", "data": {
-                "plugin": "astrbot_plugin_slang",
-                "rows": s["total"], "pending": s["pending"],
-                "enabled": self.enabled, "build": build,
+                "plugin": "astrbot_plugin_slang", "rows": s["total"],
+                "pending": s["pending"], "enabled": self.enabled, "build": build,
                 "wiki": self.store.wiki_count(),
             }}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": f"自检失败: {exc}", "data": {}}
 
     async def api_tree(self):
-        _, rows = self.store.query("all", size=3000)
         names = await self._group_names()
 
-        def bucket(pred):
-            sub = [r for r in rows if pred(r)]
-            counts: dict[str, int] = {}
-            for r in sub:
-                counts[r["scope"] or ""] = counts.get(r["scope"] or "", 0) + 1
-            subs = [{"scope": k, "name": names.get(k, ""), "count": v}
-                    for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
-            return len(sub), subs
+        def subs(table):
+            return [{"scope": s["scope"], "name": names.get(s["scope"], ""),
+                     "count": s["count"]} for s in self.svc.scopes_of(table)]
 
-        m_total, m_subs = bucket(lambda r: r["source"] == "manual")
-        a_total, a_subs = bucket(lambda r: r["source"] == "ai")
-        p_total = self.store.pending_count()
+        manual, auto, pending = self.svc.tree_counts()
         p_subs = [{"scope": s["scope"], "name": names.get(s["scope"], ""),
-                   "count": s["count"]} for s in self.store.pending_scopes()]
+                   "count": s["count"]} for s in self.svc.pending_scopes()]
         buckets = [
-            {"key": "manual", "label": "手动", "count": m_total, "subs": m_subs},
-            {"key": "auto", "label": "黑话库", "count": a_total, "subs": a_subs},
-            {"key": "pending", "label": "待审", "count": p_total, "subs": p_subs},
+            {"key": "manual", "label": "手动", "count": manual, "subs": subs("manual")},
+            {"key": "auto", "label": "黑话库", "count": auto, "subs": subs("auto")},
+            {"key": "pending", "label": "待审", "count": pending, "subs": p_subs},
         ]
         if self.wiki_enable:
             buckets.append({"key": "wiki", "label": "梗百科",
                             "count": self.store.wiki_count(), "subs": [],
                             "readonly": True})
         return {"status": "ok", "message": "", "data": {
-            "total": len(rows), "buckets": buckets}}
+            "total": manual + auto, "buckets": buckets}}
 
     async def api_list(self):
         p = await self._payload()
@@ -444,45 +444,28 @@ class JargonLite(Star):
         scoped = bool(p.get("scoped"))
         scope = str(p.get("scope") or "").strip()
 
-        if bucket == "pending":
-            ptotal, rows = self.store.pending_query(
-                search, page, size, scope, sort, scoped)
-            items = [{
-                "id": f"p{r['id']}", "content": r["name"], "meaning": r["meaning"],
-                "count": r["count"], "is_global": r["scope"] == "",
-                "auto_note": r["auto_note"], "source": r["source"],
-                "contributor": r.get("contributor") or "",
-                "scope": r["scope"], "pending": True,
-                "evidence": self._json_list(r["evidence"]),
-                "updated_at": r["updated_at"],
-            } for r in rows]
-            return {"status": "ok", "message": "", "data": {
-                "enabled": self.enabled, "stats": self._stats_web(),
-                "total": ptotal, "page": page, "size": size, "items": items}}
-
         if bucket == "wiki":
             if not self.wiki_enable:
                 return {"status": "ok", "message": "", "data": {
-                    "enabled": self.enabled, "stats": self._stats_web(),
                     "total": 0, "page": 1, "size": 50, "items": []}}
-            wtotal, wrows = self.store.wiki_query(search, page, size)
+            total, rows = self.store.wiki_query(search, page, size)
             items = [{
-                "id": f"w{r['id']}", "content": r["title"], "meaning": r["summary"],
-                "count": 0, "is_global": True, "auto_note": "",
-                "source": "wiki", "scope": "", "read_only": True,
-                "tags": r["tags"], "evidence": [], "updated_at": r["updated_at"],
-            } for r in wrows]
+                "table": "wiki", "source": "wiki", "pending": False,
+                "id": f"wiki:{r['id']}", "content": r["title"],
+                "meaning": r["summary"], "count": 0, "scope": "",
+                "is_global": True, "aliases": "", "auto_note": "",
+                "contributor": "", "tags": r["tags"], "read_only": True,
+                "evidence": "[]", "updated_at": r["updated_at"],
+            } for r in rows]
             return {"status": "ok", "message": "", "data": {
                 "enabled": self.enabled, "stats": self._stats_web(),
-                "total": wtotal, "page": page, "size": size, "items": items}}
+                "total": total, "page": page, "size": size, "items": items}}
 
-        kind = {"manual": "manual", "auto": "auto"}.get(bucket, "all")
-        total, items = self.store.query_page(
-            kind, search, scope, page, size, sort, scoped)
+        total, items = self.svc.list_entries(bucket, search, scope, scoped,
+                                             page, size, sort)
         return {"status": "ok", "message": "", "data": {
             "enabled": self.enabled, "stats": self._stats_web(),
-            "total": total, "page": page, "size": size,
-            "items": [self._serialize(r) for r in items]}}
+            "total": total, "page": page, "size": size, "items": items}}
 
     async def api_add(self):
         p = await self._payload()
@@ -491,133 +474,119 @@ class JargonLite(Star):
         scope = str(p.get("scope") or "").strip()
         if scope == "__global__":
             scope = ""
-        if not content or not meaning:
-            return {"status": "error", "message": "词条和含义都不能为空", "data": {}}
-        self.store.add_manual(content, meaning, scope=scope)
+        try:
+            self.svc.add_manual(content, meaning, scope=scope)
+        except SlangError as exc:
+            return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         where = "全局" if not scope else f"群 {scope}"
         return {"status": "ok", "message": f"「{content}」已录入（{where}）", "data": {}}
 
     async def api_update(self):
         p = await self._payload()
-        content = str(p.get("content") or "").strip()
+        old_name = str(p.get("old_name") or p.get("content") or "").strip()
+        old_scope = str(p.get("old_scope") or "").strip()
         name = str(p.get("name") or "").strip()
         meaning = str(p.get("meaning") or "").strip()
-        if not content or not meaning:
-            return {"status": "error", "message": "词条和含义都不能为空", "data": {}}
-        scope = None
-        if "scope" in p:
-            scope = str(p.get("scope") or "").strip()
-            if scope == "__global__":
-                scope = ""
-        old_scope = str(p.get("old_scope")).strip() if p.get("old_scope") is not None else None
-        if old_scope == "__global__":
-            old_scope = ""
-        table = "pending" if self._in_pending(content, old_scope) else "jargon"
-        cur = self.store._find(table, content, old_scope)
-        if not cur:
-            return {"status": "error", "message": f"没找到「{content}」", "data": {}}
-
-        new_name = (name or content)[:32]
-        new_scope = scope if scope is not None else cur["scope"]
-        conflict = self.store._find(table, new_name, new_scope)
-        if conflict and conflict["id"] != cur["id"]:
-            where = "全局" if not new_scope else f"群 {new_scope}"
-            excerpt = (conflict["meaning"] or "").strip().replace("\n", " ")[:24]
-            action = "改归属" if new_scope != cur["scope"] else "改名"
+        scope = str(p.get("scope") or "").strip() if "scope" in p else None
+        if scope == "__global__":
+            scope = ""
+        table = str(p.get("table") or "").strip()
+        if table not in TABLES:
+            table = self._resolve_edit_table(
+                old_name, old_scope, str(p.get("old_source") or p.get("source") or ""))
+        if table not in TABLES:
             return {"status": "error",
-                    "message": f"{action}失败：{where}已有同名词条「{new_name}」"
-                               f"（{excerpt}…，id {conflict['id']}），请先处理那条",
+                    "message": "页面版本过旧，无法确定要修改哪张表。请按 Ctrl+F5 强制刷新后重试。",
                     "data": {}}
-
-        rec = self.store.update(table, str(cur["id"]),
-                                name or None, meaning[:500], scope)
-        return {"status": "ok" if rec else "error",
-                "message": f"「{new_name}」已更新" if rec else "改不成，可能重名",
-                "data": {}}
-
-    def _in_pending(self, key: str, scope: str | None = None) -> bool:
-        sql = "SELECT 1 FROM pending WHERE (name = ? OR CAST(id AS TEXT) = ?)"
-        params: list = [key, key]
-        if scope is not None:
-            sql += " AND scope = ?"
-            params.append(scope)
-        with self.store._lock:
-            return bool(self.store._conn.execute(
-                sql + " LIMIT 1", params).fetchone())
+        try:
+            rec = self.svc.update(table, old_name, old_scope, name, meaning, scope)
+        except SlangError as exc:
+            return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
+        return {"status": "ok", "message": f"「{rec['name']}」已更新", "data": {}}
 
     async def api_delete(self):
         p = await self._payload()
-        content = str(p.get("content") or "").strip()
-        if not content:
-            return {"status": "error", "message": "缺少词条", "data": {}}
-        scope = None
-        if "scope" in p:
-            scope = str(p.get("scope") or "").strip()
-            if scope == "__global__":
-                scope = ""
-        table = ("pending" if p.get("pending") else "jargon") if "pending" in p else None
-        ok = self.store.delete(content, scope, table)
-        return {"status": "ok" if ok else "error",
-                "message": f"已删除「{content}」" if ok else f"没找到「{content}」", "data": {}}
+        table = self._resolve_table(p)
+        name = str(p.get("name") or p.get("content") or "").strip()
+        scope = str(p.get("scope") or "").strip()
+        try:
+            self.svc.delete(table, name, scope)
+        except SlangError as exc:
+            return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
+        return {"status": "ok", "message": f"已删除「{name}」", "data": {}}
 
     async def api_approve(self):
         p = await self._payload()
-        content = str(p.get("content") or "").strip()
-        if not content:
-            return {"status": "error", "message": "缺少词条", "data": {}}
-        scope = None
-        if "scope" in p:
-            scope = str(p.get("scope") or "").strip()
-            if scope == "__global__":
-                scope = ""
-        only = "pending" if p.get("pending") else ("jargon" if p.get("from_jargon") else None)
-        action = self.store.approve(content, scope, only)
+        table = self._resolve_table(p)
+        name = str(p.get("name") or p.get("content") or "").strip()
+        scope = str(p.get("scope") or "").strip()
+        try:
+            action = self.svc.approve(table, name, scope)
+        except SlangError as exc:
+            return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         if action == "approved":
-            return {"status": "ok", "message": f"「{content}」已通过，移入黑话库", "data": {}}
-        if action == "pending":
-            return {"status": "ok", "message": f"「{content}」已驳回，移回待审", "data": {}}
-        return {"status": "error", "message": f"没找到「{content}」", "data": {}}
+            target = SIDE["manual"] if table == "manual_pending" else SIDE["auto"]
+            return {"status": "ok", "message": f"「{name}」已通过，移入{target}", "data": {}}
+        target = SIDE["manual_pending"] if table == "manual" else SIDE["auto_pending"]
+        return {"status": "ok", "message": f"「{name}」已驳回，移回{target}", "data": {}}
 
     async def api_bulk(self):
         p = await self._payload()
         action = str(p.get("action") or "")
-        ids = p.get("ids")
-        if action not in ("approve", "delete") or not isinstance(ids, list) or not ids:
+        items = p.get("items")
+        if action not in ("approve", "delete") or not isinstance(items, list) or not items:
             return {"status": "error", "message": "参数不对", "data": {}}
-        res = self.store.bulk_pending(action, ids[:200])
+        try:
+            res = self.svc.bulk(action, items[:200])
+        except Exception as exc:  # noqa: BLE001
+            return self._error("批量操作", exc)
         if action == "approve":
-            msg = f"已通过 {res['approved']} 条，移入黑话库"
+            msg = f"已通过 {res['approved']} 条"
         else:
             msg = f"已删除 {res['deleted']} 条待审"
+        if res.get("skipped"):
+            msg += f"；跳过 {res['skipped']} 条（同名或参数无效）"
         return {"status": "ok", "message": msg, "data": res}
 
     async def api_toggle_global(self):
         p = await self._payload()
-        content = str(p.get("content") or "").strip()
-        rec = self.store.get(content)
-        if not rec:
-            return {"status": "error", "message": f"没找到「{content}」", "data": {}}
-        if rec["scope"]:
-            self.store.set_scope(content, "")
-            return {"status": "ok", "message": f"「{content}」已设为全局", "data": {}}
-        return {"status": "ok", "message": f"「{content}」当前已是全局", "data": {}}
+        table = self._resolve_table(p)
+        name = str(p.get("name") or p.get("content") or "").strip()
+        scope = str(p.get("scope") or "").strip()
+        try:
+            if scope:
+                self.svc.update(table, name, scope, scope="")
+                return {"status": "ok", "message": f"「{name}」已设为全局", "data": {}}
+        except SlangError as exc:
+            return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
+        return {"status": "ok", "message": f"「{name}」已经是全局条目", "data": {}}
 
     async def api_switch(self):
         p = await self._payload()
         self.enabled = bool(p.get("enabled"))
-        try:
-            if hasattr(self.config, "save_config"):
-                self.config["enabled"] = self.enabled
+        self.config["enabled"] = self.enabled
+        if hasattr(self.config, "save_config"):
+            try:
                 self.config.save_config()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[slang] 开关写入失败: {exc}")
-        return {"status": "ok",
-                "message": f"已{'开启' if self.enabled else '关闭'}",
+            except Exception:  # noqa: BLE001
+                pass
+        return {"status": "ok", "message": f"已{'开启' if self.enabled else '关闭'}",
                 "data": {"enabled": self.enabled}}
+
+    # ---------------- 配置 ----------------
 
     @staticmethod
     def _schema_fields() -> list[dict]:
-        """直接读 _conf_schema.json，保证设置页和后台配置同源。"""
         try:
             raw = json.loads((pathlib.Path(__file__).parent / "_conf_schema.json")
                              .read_text(encoding="utf-8"))
@@ -626,12 +595,10 @@ class JargonLite(Star):
         fields = []
         for key, spec in raw.items():
             fields.append({
-                "key": key,
-                "label": spec.get("description", key),
+                "key": key, "label": spec.get("description", key),
                 "type": spec.get("type", "string"),
                 "default": spec.get("default"),
-                "min": spec.get("min"),
-                "max": spec.get("max"),
+                "min": spec.get("min"), "max": spec.get("max"),
             })
         return fields
 
@@ -675,7 +642,6 @@ class JargonLite(Star):
                 else:
                     val = str(raw if raw is not None else "").strip()
                     if key == "blacklist_groups":
-                        # 统一存成英文逗号，去重，去空白
                         val = ",".join(self._split_list(val))
                     self.config[key] = val
                 changed.append(key)
@@ -716,140 +682,159 @@ class JargonLite(Star):
 
     @staticmethod
     def _fmt(rec: dict) -> str:
-        scope = "全局" if not rec["scope"] else f"群{rec['scope']}"
-        src = "手动" if rec.get("source") == "manual" else "自动"
-        return f"#{rec['id']} {rec['name']}：{rec['meaning'][:40]} [{src} {scope} ×{rec['count']}]"
+        name = rec.get("content") or rec.get("name") or ""
+        meaning = rec.get("meaning") or ""
+        scope = rec.get("scope") or ""
+        source = rec.get("source") or ""
+        where = "全局" if not scope else f"群{scope}"
+        src = "手动" if source == "manual" else "自动"
+        return f"{name}：{meaning[:40]} [{src} {where} ×{rec.get('count', 1)}]"
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("list")
     async def yh_list(self, event: AstrMessageEvent):
-        """列出词条，带审核标记与归属。"""
+        """列出已过审词条。"""
         tokens = self._tokens(event)
         page = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 1
-        size = 8
-        total, rows = self.store.query_page("all", page=page, size=size)
-        if not rows:
+        rows = self.svc.all_approved()
+        rows.sort(key=lambda r: -r["updated_at"])
+        total = len(rows)
+        page_rows = rows[(page - 1) * 8: page * 8]
+        if not page_rows:
             yield event.plain_result("还没有词条。")
             return
-        lines = [f"词条第 {page} 页（共 {total} 条）："] + [self._fmt(r) for r in rows]
+        lines = [f"词条第 {page} 页（共 {total} 条）："] + [self._fmt(r) for r in page_rows]
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("pending")
     async def yh_pending(self, event: AstrMessageEvent):
-        """列出还没人工通过、等着你复核的条目。"""
-        total, rows = self.store.pending_query(size=10)
+        """列出待审词条。"""
+        total, rows = self.svc.list_entries("pending", page=1, size=10)
         if not rows:
-            yield event.plain_result("没有待复核的条目。")
+            yield event.plain_result("没有待审的条目。")
             return
-        items = []
-        for r in rows:
-            scope = "全局" if not r["scope"] else f"群{r['scope']}"
-            items.append(f"#{r['id']} {r['name']}：{r['meaning'][:40]} "
-                         f"[{scope} ×{r['count']}]")
-        lines = [f"待复核 {total} 条（前 10）："] + items
+        lines = [f"待审 {total} 条（前 10）："] + [self._fmt(r) for r in rows]
         lines.append("用 /yh approve 名称 或 /yh del 名称 处理")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("search")
     async def yh_search(self, event: AstrMessageEvent):
-        """按关键词搜词条名和含义。"""
+        """按关键词搜词条。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh search 关键词")
             return
         kw = tokens[1]
-        _, rows = self.store.query_page("all", search=kw, size=200)
-        hit = rows
-        if not hit:
-            yield event.plain_result(f"没找到包含「{kw}」的条目。")
+        rows = [r for r in self.svc.all_approved()
+                if kw in r["content"] or kw in r["meaning"]]
+        if not rows:
+            yield event.plain_result(f"没找到包含「{kw}」的已审词条。")
             return
-        yield event.plain_result(f"命中 {len(hit)} 条：\n" + "\n".join(self._fmt(r) for r in hit[:10]))
+        yield event.plain_result(
+            f"命中 {len(rows)} 条：\n" + "\n".join(self._fmt(r) for r in rows[:10]))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("add")
     async def yh_add(self, event: AstrMessageEvent):
-        """手动录入词条：/yh add global|group 名称 含义。"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员能录入。")
-            return
+        """手动录入：/yh add global|group 名称 含义。"""
         tokens = self._tokens(event)
         if len(tokens) < 4:
             yield event.plain_result("用法：/yh add global|group 名称 含义")
             return
         where, name, meaning = tokens[1], tokens[2], " ".join(tokens[3:])
         scope = "" if where == "global" else self._scope(event)
-        rec = self.store.add_manual(name, meaning, scope=scope)
-        yield event.plain_result(f"已录入并标记人工过关：\n{self._fmt(rec)}")
+        try:
+            self.svc.add_manual(name, meaning, scope=scope)
+        except SlangError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result(f"已录入：{name}（{'全局' if not scope else '本群'}）")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("del")
     async def yh_del(self, event: AstrMessageEvent):
         """删除词条：/yh del 名称。"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员能删除。")
-            return
         tokens = self._tokens(event)
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh del 名称")
             return
-        ok = self.store.delete(tokens[1])
-        yield event.plain_result("已删除。" if ok else "没找到这个条目。")
+        found = self.svc.find_any(tokens[1])
+        if not found:
+            yield event.plain_result("没找到这个条目。")
+            return
+        table, rec = found
+        self.svc.delete(table, rec["name"], rec["scope"])
+        yield event.plain_result("已删除。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("approve")
     async def yh_approve(self, event: AstrMessageEvent):
-        """标记人工通过：/yh approve 名称。"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员能审核。")
-            return
+        """通过或驳回：/yh approve 名称。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh approve 名称")
             return
-        rec = self.store.approve(tokens[1])
+        found = self.svc.find_any(tokens[1])
+        if not found:
+            yield event.plain_result("没找到这个条目。")
+            return
+        table, rec = found
+        try:
+            action = self.svc.approve(table, rec["name"], rec["scope"])
+        except SlangError as exc:
+            yield event.plain_result(str(exc))
+            return
         yield event.plain_result(
-            "已通过，移入黑话库。" if rec == "approved"
-            else ("已退回待审。" if rec == "pending" else "没找到这个条目。"))
+            "已通过，移入黑话库。" if action == "approved" else "已驳回，移回待审。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("promote")
     async def yh_promote(self, event: AstrMessageEvent):
-        """把群词条提升为全局：/yh promote 名称。"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员能改归属。")
-            return
+        """设为全局：/yh promote 名称。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh promote 名称")
             return
-        yield event.plain_result(
-            "已提升为全局词条。" if self.store.set_scope(tokens[1], "") else "没找到这个条目。")
+        found = self.svc.find_any(tokens[1])
+        if not found:
+            yield event.plain_result("没找到这个条目。")
+            return
+        table, rec = found
+        if not rec["scope"]:
+            yield event.plain_result("这条已经是全局词条了。")
+            return
+        try:
+            self.svc.update(table, rec["name"], rec["scope"], scope="")
+        except SlangError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result("已提升为全局词条。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("stat")
     async def yh_stat(self, event: AstrMessageEvent):
-        """查看词条总数与审核状态分布。"""
-        s = self.store.stats()
-        cats = "、".join(f"{k} {v}" for k, v in s["by_category"].items()) or "无"
+        """查看统计。"""
+        s = self.svc.stats()
         yield event.plain_result(
-            f"黑话 {s['total']} 条（{cats}）\n"
-            f"手动 {s['manual']} · 自动 {s['auto']} · 待审 {s['pending']}")
+            f"黑话 {s['total']} 条（手动 {s['manual']} · 自动 {s['auto']}）\n"
+            f"待审 {s['pending']} · 梗库 {self.store.wiki_count()}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("check")
     async def yh_check(self, event: AstrMessageEvent):
-        """预览一句话会注入哪些词条：/yh check 一句话。"""
+        """预览一句话会注入什么：/yh check 一句话。"""
         tokens = self._tokens(event)
         if len(tokens) < 2:
             yield event.plain_result("用法：/yh check 一句话（看会注入什么）")
             return
         text = " ".join(tokens[1:])
-        entries = self.store.eligible(self._scope(event))
-        hits = match(entries, text, limit=self.inject_max)
+        hits = self.svc.match(text, self._scope(event), self.inject_max)
         if not hits:
             yield event.plain_result("这句话不会命中任何词条。")
             return
-        yield event.plain_result("会注入：\n" + "\n".join(
-            f"· {h['name']}（命中「{h['_hit']}」）" for h in hits))
+        yield event.plain_result(
+            f"命中 {len(hits)} 条：\n" + "\n".join(
+                f"[{SIDE.get(h['table'], h['table'])}] {h['name']}：{h['meaning'][:40]}"
+                for h in hits))

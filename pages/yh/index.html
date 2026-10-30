@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>黑话审核台 · lite</title>
@@ -56,7 +58,8 @@ body{background:var(--bg);color:var(--text);
 .main-head h2{font-size:16px;font-weight:650;flex:1;min-width:0;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 .main-head h2 span{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
-.search{width:220px;flex:0 0 auto}
+.search{width:220px;flex:1 1 160px;min-width:0}
+#addBtn{flex:0 0 auto;white-space:nowrap}
 .sort{flex:0 0 auto;width:104px;padding:8px 10px;border:1px solid var(--line);
   border-radius:10px;background:#fff;font:inherit;font-size:12.5px;color:#3a3b40;
   cursor:pointer}
@@ -121,10 +124,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 .form-row{display:flex;gap:10px;flex-wrap:wrap}
 .form-row .field{flex:1;min-width:140px}
 
-.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
-  background:#1b1c1f;color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;
-  opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
-.toast.show{opacity:.94}
+.mask.alert{z-index:40}
 
 @media (max-width:820px){
   .app{flex-direction:column;padding:12px}
@@ -179,6 +179,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
     <div class="field"><label>内容</label><textarea id="editMeaning" maxlength="500"></textarea></div>
     <div class="field"><label>归属</label><select id="editScope"></select></div>
     <div class="modal-foot">
+      <div id="editErr" style="display:none;color:var(--danger);font-size:12px;margin-bottom:8px;line-height:1.5"></div>
       <button class="link" id="editCancel">取消</button>
       <button class="primary" id="editSave">确认</button>
     </div>
@@ -212,23 +213,46 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="mask alert" id="alertMask">
+  <div class="card modal" style="width:min(420px,100%)">
+    <h3 id="alertTitle">提示</h3>
+    <div id="alertBody" style="font-size:13px;line-height:1.7;white-space:pre-wrap;color:#3a3b40"></div>
+    <div class="modal-foot"><button class="primary" id="alertOk">知道了</button></div>
+  </div>
+</div>
+
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
+const PAGE_BUILD = "v1.4.5";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
   selected: new Set() };
 
-function toast(msg){
-  const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 2600);
+function showAlert(msg, title = "提示"){
+  $("alertTitle").textContent = title;
+  $("alertBody").textContent = msg || "服务器没有返回内容";
+  $("alertMask").classList.add("on");
 }
-window.addEventListener("error", e => toast("页面脚本出错：" + (e.message || "未知")));
+$("alertOk").onclick = () => $("alertMask").classList.remove("on");
+
+function callApi(ep, payload, ms = 10000){
+  return Promise.race([
+    api(ep, payload),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), ms)),
+  ]);
+}
+
+function showResult(r, okTitle = "完成"){
+  if (r.status === "ok") showAlert(r.message || "操作成功", okTitle);
+  else showAlert(r.message || "操作失败：服务器未返回原因", "操作失败");
+}
+
+window.addEventListener("error", e => showAlert("页面脚本出错：" + (e.message || "未知"), "页面出错"));
 window.addEventListener("unhandledrejection", e =>
-  toast("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知")));
+  showAlert("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知"), "请求失败"));
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -360,6 +384,7 @@ async function loadTree(){
 
 async function loadList(){
   $("sortSelect").style.display = state.bucket === "wiki" ? "none" : "";
+  $("addBtn").style.display = state.bucket === "manual" ? "" : "none";
   const r = await api("yh/list", { bucket: state.bucket, scope: state.scope,
     scoped: state.scopeSel, search: state.search, page: state.page,
     size: state.size, sort: state.sort });
@@ -394,7 +419,7 @@ async function ping(){
     const r = await api("yh/ping", {});
     if (r.status === "ok"){
       $("diag").textContent =
-        `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · build ${r.data.build || "?"}`;
+        `自检 ok · ${r.data.rows} 条 · 梗库 ${r.data.wiki ?? 0} · 页面 ${PAGE_BUILD}`;
     } else {
       $("diag").textContent = "自检失败：" + (r.message || "");
     }
@@ -453,21 +478,38 @@ $("list").addEventListener("click", async e => {
   const act = btn.dataset.act;
 
   if (act === "approve"){
-    const r = await api("yh/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    if (!it.table){ showAlert("页面是旧版本，缺少表字段。请按 Ctrl+F5 强制刷新后重试。", "需要刷新"); return; }
+    try {
+      const r = await callApi("yh/approve", { table: it.table, name: it.content, scope: it.scope });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "global"){
-    const r = await api("yh/toggle_global", { content: it.content });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    try {
+      const r = await callApi("yh/toggle_global", { table: it.table, name: it.content, scope: it.scope });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "del"){
+    if (!it.table){ showAlert("页面是旧版本，缺少表字段。请按 Ctrl+F5 强制刷新后重试。", "需要刷新"); return; }
     if (!btn.dataset.armed){
       btn.dataset.armed = "1"; btn.classList.add("armed"); btn.textContent = "再点一次";
       setTimeout(() => { btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent="删除"; }, 2600);
       return;
     }
-    const r = await api("yh/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    try {
+      const r = await callApi("yh/delete", { table: it.table, name: it.content, scope: it.scope });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "edit"){
     editing = it;
@@ -486,10 +528,32 @@ $("editSave").onclick = async () => {
   if (!editing) return;
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
-  if (!name || !meaning) return toast("词条名和内容都不能为空");
-  const r = await api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope });
-  toast(r.message);
-  if (r.status === "ok"){ $("editMask").classList.remove("on"); editing = null; reload(); }
+  if (!editing.table){ showAlert("页面是旧版本，缺少表字段。请按 Ctrl+F5 强制刷新后重试。", "需要刷新"); return; }
+  if (!name || !meaning){
+    showAlert("词条名和内容都不能为空", "没法保存");
+    return;
+  }
+  const err = $("editErr");
+  if (err) err.style.display = "none";
+  let r;
+  try {
+    r = await Promise.race([
+      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope, name, meaning, scope: $("editScope").value }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), 10000)),
+    ]);
+  } catch (e) {
+    const msg = "请求失败：" + ((e && e.message) || e);
+    showAlert(msg, "没能保存");
+    return;
+  }
+  if (r.status === "ok"){
+    showAlert(r.message || "内容已更新", "已保存");
+    $("editMask").classList.remove("on"); editing = null; reload();
+    return;
+  }
+  err.textContent = r.message || "保存失败";
+  err.style.display = "block";
+  showAlert(r.message || "服务器未返回原因，请查看 AstrBot 日志", "没能保存");
 };
 
 /* ---------- 录入 ---------- */
@@ -508,9 +572,9 @@ $("addSave").onclick = async () => {
   const name = $("addName").value.trim();
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
-  if (!name || !meaning) return toast("词条名和内容都不能填");
+  if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
   const r = await api("yh/add", { content: name, meaning, scope });
-  toast(r.message);
+  showResult(r, "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
 
@@ -592,7 +656,7 @@ function fieldHTML(f, value){
 
 $("settingsBtn").onclick = async () => {
   const r = await api("yh/config", {});
-  if (r.status !== "ok"){ toast(r.message || "读取配置失败"); return; }
+  if (r.status !== "ok"){ showAlert(r.message || "读取配置失败", "读取配置失败"); return; }
   renderSettings(r.data);
   $("setMask").classList.add("on");
 };
@@ -608,7 +672,7 @@ $("setSave").onclick = async () => {
       : el.value;
   });
   const r = await api("yh/config", payload);
-  toast(r.message || "已保存");
+  showAlert((r.message ? r.message + "。" : "") + "配置已写入后台；学习频率、模型等改动建议重载插件后生效。", "设置已保存");
   if (r.status === "ok"){
     $("setMask").classList.remove("on");
     reload();
@@ -649,11 +713,17 @@ $("bulkAll").onchange = () => {
 
 async function bulkAction(action){
   const ids = [...state.selected];
+  const items = ids.map(id => state.cache.get(String(id))).filter(Boolean)
+    .map(it => ({ table: it.table, name: it.content, scope: it.scope }));
   if (!ids.length) return;
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
-  const r = await api("yh/bulk", { action, ids });
-  toast(r.message || "操作完成");
-  if (r.status === "ok") reload();
+  const r = await api("yh/bulk", { action, items });
+  if (r.status !== "ok"){
+    showResult(r, "批量完成");
+    return;
+  }
+  showAlert(r.message || "操作完成", "完成");
+  reload();
 }
 
 $("bulkApprove").onclick = () => bulkAction("approve");
