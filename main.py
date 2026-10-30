@@ -531,10 +531,18 @@ class JargonLite(Star):
         if old_scope == "__global__":
             old_scope = ""
         old_source = str(p.get("old_source") or p.get("source") or "").strip() or None
-        table = "pending" if self._in_pending(content, old_scope, old_source) else "jargon"
-        cur = self.store._find(table, content, old_scope, old_source)
+        rid = str(p.get("id") or "").strip().lstrip("p")
+        table = "pending" if p.get("pending") else "jargon"
+        cur = None
+        if rid.isdigit():
+            cur = self.store.get_by_id(table, int(rid))
+        if cur is None:
+            # 兼容旧页面：没有 id 时按名称/作用域/来源查找
+            table = "pending" if self._in_pending(content, old_scope, old_source) else "jargon"
+            cur = self.store._find(table, content, old_scope, old_source)
         if not cur:
             return {"status": "error", "message": f"没找到「{content}」", "data": {}}
+        old_source = cur["source"]
 
         new_name = (name or content)[:32]
         new_scope = scope if scope is not None else cur["scope"]

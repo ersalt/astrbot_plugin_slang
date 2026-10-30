@@ -542,6 +542,12 @@ class JargonStore:
             self._conn.commit()
         return {"approved": approved, "deleted": deleted, "skipped": skipped}
 
+    def get_by_id(self, table: str, rid: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT * FROM {table} WHERE id = ?", (rid,)).fetchone()
+            return dict(row) if row else None
+
     # ---------------- 待审查询 ----------------
 
     def pending_count(self) -> int:
