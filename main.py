@@ -86,6 +86,9 @@ class JargonLite(Star):
         self._wiki_task = None
         self._wiki_running = False
         self._web_registered = False
+        self._inject = {"calls": 0, "hits": 0, "empty": 0,
+                        "blocked": 0, "no_hit": 0, "last": ""}
+        self._inject_seen = False
         self._register_web_api()
 
     @staticmethod
@@ -255,10 +258,19 @@ class JargonLite(Star):
 
     @filter.on_llm_request()
     async def inject(self, event: AstrMessageEvent, req):
-        if not self.enabled or self._blocked(event):
+        self._inject["calls"] += 1
+        if not self._inject_seen:
+            self._inject_seen = True
+            logger.info("[slang] 注入钩子已触发（之后按命中情况记录 INFO）")
+        if not self.enabled:
+            self._inject["blocked"] += 1
+            return
+        if self._blocked(event):
+            self._inject["blocked"] += 1
             return
         text = (getattr(req, "prompt", "") or "").strip()
         if not text:
+            self._inject["empty"] += 1
             return
         hint, tag = "", ""
         try:
@@ -280,11 +292,14 @@ class JargonLite(Star):
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"[slang] 梗库查询失败: {exc}")
         if not hint:
+            self._inject["no_hit"] += 1
             return
         if TextPart is None:
             logger.warning("[slang] 当前 AstrBot 不支持临时上下文，跳过注入")
             return
         req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
+        self._inject["hits"] += 1
+        self._inject["last"] = f"{tag} @ {time.strftime('%H:%M:%S')}"
         logger.info(f"[slang] 注入 {tag}")
 
     # ---------------- WebUI ----------------
@@ -822,9 +837,13 @@ class JargonLite(Star):
     async def yh_stat(self, event: AstrMessageEvent):
         """查看统计。"""
         s = self.svc.stats()
+        d = self._inject
         yield event.plain_result(
             f"黑话 {s['total']} 条（手动 {s['manual']} · 自动 {s['auto']}）\n"
-            f"待审 {s['pending']} · 梗库 {self.store.wiki_count()}")
+            f"待审 {s['pending']} · 梗库 {self.store.wiki_count()}\n"
+            f"注入：调用 {d['calls']} · 命中 {d['hits']} · 空文本 {d['empty']} "
+            f"· 无命中 {d['no_hit']} · 跳过 {d['blocked']}\n"
+            f"最近：{d['last'] or '无'}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("check")
