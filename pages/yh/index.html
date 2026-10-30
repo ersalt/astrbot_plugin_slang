@@ -225,7 +225,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.4.4";
+const PAGE_BUILD = "v1.4.5";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -237,6 +237,13 @@ function showAlert(msg, title = "提示"){
   $("alertMask").classList.add("on");
 }
 $("alertOk").onclick = () => $("alertMask").classList.remove("on");
+
+function callApi(ep, payload, ms = 10000){
+  return Promise.race([
+    api(ep, payload),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), ms)),
+  ]);
+}
 
 function showResult(r, okTitle = "完成"){
   if (r.status === "ok") showAlert(r.message || "操作成功", okTitle);
@@ -471,12 +478,22 @@ $("list").addEventListener("click", async e => {
   const act = btn.dataset.act;
 
   if (act === "approve"){
-    const r = await api("yh/approve", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending, from_jargon: !it.pending });
-    showResult(r); if (r.status === "ok") reload(); return;
+    try {
+      const r = await callApi("yh/approve", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending, from_jargon: !it.pending });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "global"){
-    const r = await api("yh/toggle_global", { content: it.content });
-    showAlert(r.message); if (r.status === "ok") reload(); return;
+    try {
+      const r = await callApi("yh/toggle_global", { content: it.content });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "del"){
     if (!btn.dataset.armed){
@@ -484,8 +501,13 @@ $("list").addEventListener("click", async e => {
       setTimeout(() => { btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent="删除"; }, 2600);
       return;
     }
-    const r = await api("yh/delete", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending });
-    showResult(r); if (r.status === "ok") reload(); return;
+    try {
+      const r = await callApi("yh/delete", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending });
+      showResult(r); if (r.status === "ok") reload();
+    } catch (e) {
+      showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
+    }
+    return;
   }
   if (act === "edit"){
     editing = it;
