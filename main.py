@@ -288,6 +288,7 @@ class JargonLite(Star):
             ("update", self.api_update, ["POST"], "改含义"),
             ("delete", self.api_delete, ["POST"], "删除"),
             ("approve", self.api_approve, ["POST"], "通过/退回"),
+            ("bulk", self.api_bulk, ["POST"], "批量审核"),
             ("toggle_global", self.api_toggle_global, ["POST"], "切换全局"),
             ("switch", self.api_switch, ["POST"], "总开关"),
             ("config", self.api_config, ["GET", "POST"], "读写配置"),
@@ -574,6 +575,19 @@ class JargonLite(Star):
         if action == "pending":
             return {"status": "ok", "message": f"「{content}」已驳回，移回待审", "data": {}}
         return {"status": "error", "message": f"没找到「{content}」", "data": {}}
+
+    async def api_bulk(self):
+        p = await self._payload()
+        action = str(p.get("action") or "")
+        ids = p.get("ids")
+        if action not in ("approve", "delete") or not isinstance(ids, list) or not ids:
+            return {"status": "error", "message": "参数不对", "data": {}}
+        res = self.store.bulk_pending(action, ids[:200])
+        if action == "approve":
+            msg = f"已通过 {res['approved']} 条，移入黑话库"
+        else:
+            msg = f"已删除 {res['deleted']} 条待审"
+        return {"status": "ok", "message": msg, "data": res}
 
     async def api_toggle_global(self):
         p = await self._payload()

@@ -445,6 +445,28 @@ class JargonStore:
                 self._conn.commit()
             return len(rows)
 
+    def bulk_pending(self, action: str, ids: list) -> dict:
+        """批量处理待审：approve = 通过并移入黑话库，delete = 删除。"""
+        approved = deleted = 0
+        with self._lock:
+            for raw in ids:
+                key = str(raw).strip().lstrip("p")
+                if not key.isdigit():
+                    continue
+                row = self._conn.execute(
+                    "SELECT * FROM pending WHERE id = ?", (int(key),)).fetchone()
+                if not row:
+                    continue
+                rec = dict(row)
+                if action == "approve":
+                    self._promote(rec)
+                    approved += 1
+                else:
+                    deleted += 1
+                self._conn.execute("DELETE FROM pending WHERE id = ?", (rec["id"],))
+            self._conn.commit()
+        return {"approved": approved, "deleted": deleted}
+
     # ---------------- 待审查询 ----------------
 
     def pending_count(self) -> int:
