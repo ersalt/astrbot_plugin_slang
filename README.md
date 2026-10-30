@@ -166,7 +166,7 @@ tests/        服务层回归测试
 python -m unittest discover plugins/astrbot_plugin_slang/tests -v
 ```
 
-## 已知限制## 已知限制
+## 已知限制
 
 - 关键词是子串匹配，半截词要靠 `aliases` 补
 - 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有待审表；可用 `reject_words` 硬过滤掉固定不收的词
