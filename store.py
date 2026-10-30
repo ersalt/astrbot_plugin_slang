@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS jargon (
     meaning TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'ai',
+    contributor TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 1,
     auto_note TEXT NOT NULL DEFAULT '',
     evidence TEXT NOT NULL DEFAULT '[]',
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS pending (
     meaning TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'ai',
+    contributor TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 1,
     auto_note TEXT NOT NULL DEFAULT '',
     evidence TEXT NOT NULL DEFAULT '[]',
@@ -86,6 +88,7 @@ class JargonStore:
         self._conn.execute("PRAGMA journal_size_limit=4194304")
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._ensure_columns()
             self._conn.execute("DELETE FROM buffer WHERE ts < ?",
                                (time.time() - 7 * 86400,))
             self._conn.commit()
@@ -126,6 +129,16 @@ class JargonStore:
             except Exception:
                 pass
 
+    def _ensure_columns(self):
+        """老库补列：ALTER TABLE ADD COLUMN 没法用 IF NOT EXISTS。"""
+        with self._lock:
+            for table in ("jargon", "pending"):
+                cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                if "contributor" not in cols:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN contributor TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+
     # ---------------- 缓冲 ----------------
 
     def buffer_add(self, umo: str, sender: str, text: str) -> int:
@@ -158,7 +171,7 @@ class JargonStore:
 
     def upsert(self, table: str, name: str, meaning: str, scope: str = "",
                aliases: str = "", evidence: str = "", source: str = "ai",
-               auto_note: str = "") -> dict:
+               auto_note: str = "", contributor: str = "") -> dict:
         name = (name or "").strip()[:32]
         meaning = (meaning or "").strip()[:1000]
         if not name or not meaning:
@@ -179,10 +192,10 @@ class JargonStore:
             else:
                 self._conn.execute(
                     f"""INSERT INTO {table}(name, aliases, meaning, scope, source,
-                        count, auto_note, evidence, created_at, updated_at)
-                        VALUES(?,?,?,?,?,1,?,?,?,?)""",
-                    (name, aliases, meaning, scope, source, auto_note,
-                     self._pack_evidence(evidence), now, now))
+                        contributor, count, auto_note, evidence, created_at, updated_at)
+                        VALUES(?,?,?,?,?,?,1,?,?,?,?)""",
+                    (name, aliases, meaning, scope, source, contributor,
+                     auto_note, self._pack_evidence(evidence), now, now))
             self._conn.commit()
         return self.get(name, table) or {}
 
@@ -195,7 +208,8 @@ class JargonStore:
                 ((name or "").strip()[:32], scope))
             self._conn.commit()
         return self.upsert("jargon", name, meaning, scope=scope,
-                           aliases=aliases, evidence="手动录入", source="manual")
+                           aliases=aliases, evidence="手动录入", source="manual",
+                           contributor="手动录入")
 
     def get(self, key: str, table: str | None = None) -> dict | None:
         tables = [table] if table else ["jargon", "pending"]
@@ -319,7 +333,8 @@ class JargonStore:
     # ---------------- 审核（单标记） ----------------
 
     def submit(self, name: str, meaning: str, scope: str = "", aliases: str = "",
-               evidence: str = "", auto_note: str = "", approved: bool = False) -> dict:
+               evidence: str = "", auto_note: str = "", approved: bool = False,
+               contributor: str = "") -> dict:
         """学习产物入库。
 
         已存在的词条只累加次数与证据，绝不覆盖人工/模型之前写下的含义。
@@ -347,10 +362,10 @@ class JargonStore:
             table = "jargon" if approved else "pending"
             self._conn.execute(
                 f"""INSERT INTO {table}(name, aliases, meaning, scope, source,
-                    count, auto_note, evidence, created_at, updated_at)
-                    VALUES(?,?,?,?,?,1,?,?,?,?)""",
-                (name, aliases, meaning, scope, "ai", auto_note,
-                 self._pack_evidence(evidence), now, now))
+                    contributor, count, auto_note, evidence, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,1,?,?,?,?)""",
+                (name, aliases, meaning, scope, "ai", contributor,
+                 auto_note, self._pack_evidence(evidence), now, now))
             self._conn.commit()
         return self.get(name, table) or {}
 
@@ -397,17 +412,19 @@ class JargonStore:
         if cur:
             c = dict(cur)
             self._conn.execute(
-                """UPDATE jargon SET count = count + ?, evidence = ?, updated_at = ?
+                """UPDATE jargon SET count = count + ?, evidence = ?, updated_at = ?,
+                   contributor = CASE WHEN contributor = '' THEN ? ELSE contributor END
                    WHERE id = ?""",
-                (rec["count"] or 1, self._merge_evidence(c["evidence"], ""), now, c["id"]))
+                (rec["count"] or 1, self._merge_evidence(c["evidence"], ""), now,
+                 rec.get("contributor", ""), c["id"]))
         else:
             self._conn.execute(
-                """INSERT INTO jargon(name, aliases, meaning, scope, source, count,
-                   auto_note, evidence, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO jargon(name, aliases, meaning, scope, source,
+                   contributor, count, auto_note, evidence, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
-                 rec["source"], rec["count"], rec["auto_note"], rec["evidence"],
-                 rec["created_at"], now))
+                 rec["source"], rec.get("contributor", ""), rec["count"],
+                 rec["auto_note"], rec["evidence"], rec["created_at"], now))
 
     def _demote(self, rec: dict):
         """黑话库 -> 待审：已有同名同群草稿时合并次数，内容以被驳回的这条为准。"""
@@ -425,12 +442,12 @@ class JargonStore:
                  self._merge_evidence(c["evidence"], ""), now, c["id"]))
         else:
             self._conn.execute(
-                """INSERT INTO pending(name, aliases, meaning, scope, source, count,
-                   auto_note, evidence, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO pending(name, aliases, meaning, scope, source,
+                   contributor, count, auto_note, evidence, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (rec["name"], rec["aliases"], rec["meaning"], rec["scope"],
-                 rec["source"], rec["count"], rec["auto_note"], rec["evidence"],
-                 rec["created_at"], now))
+                 rec["source"], rec.get("contributor", ""), rec["count"],
+                 rec["auto_note"], rec["evidence"], rec["created_at"], now))
 
     def dedupe(self) -> int:
         """清理两表里同名同群的重复：以已过审为准，合并次数后删掉待审那条。"""

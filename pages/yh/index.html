@@ -328,7 +328,8 @@ function entryHTML(it){
   const src = it.source === "manual" ? "手动" : "自动";
   const scope = it.is_global ? "全局" : `群 ${esc(it.scope)}`;
   const note = it.auto_note ? `理由：${esc(it.auto_note)}` : "";
-  const meta = [src, scope, `×${it.count}`,
+  const who = it.contributor ? `来源：${esc(it.contributor)}` : "";
+  const meta = [src, scope, who, `×${it.count}`,
     it.updated_at ? new Date(it.updated_at * 1000).toLocaleString("zh-CN",{hour12:false}).slice(5,16) : "",
     note].filter(Boolean).join(" · ");
   const pick = it.pending

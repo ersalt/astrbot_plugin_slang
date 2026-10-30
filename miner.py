@@ -179,6 +179,7 @@ class Miner:
                 item["name"], item["meaning"], scope=scope,
                 aliases=item["aliases"], evidence=item["evidence"],
                 auto_note=reason, approved=certain,
+                contributor=self._contributor(messages, item["name"]),
             )
             saved += 1
             logger.info(
@@ -202,6 +203,14 @@ class Miner:
         if not out:
             logger.warning("[slang] 自审结果解析失败，全部进待复核")
         return out
+
+    @staticmethod
+    def _contributor(messages: list[dict], name: str) -> str:
+        """找出最早提到这个词的发送者，作为来源群友。"""
+        for msg in messages:
+            if name and name in (msg.get("text") or ""):
+                return str(msg.get("sender") or "")[:32]
+        return ""
 
     @staticmethod
     def _freq(chat: str, name: str) -> int:

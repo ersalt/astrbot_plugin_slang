@@ -93,6 +93,8 @@
 
 待审列表支持勾选、全选本页、批量通过/删除。
 
+词条 meta 会显示**来源**：自动学习记录最早提到该词的人，手动录入显示「手动录入」。
+
 列表带分页；除梗百科外，可切换排序：默认「最新优先」（按更新时间倒序），也可选「次数优先」（按出现次数倒序）。
 
 ## 审核模型
@@ -129,7 +131,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 
 | 表 | 内容 |
 | --- | --- |
-| `jargon` | 已通过词条：name / aliases / meaning / scope / source / count / auto_note / evidence |
+| `jargon` | 已通过词条：name / aliases / meaning / scope / source / contributor / count / auto_note / evidence |
 | `pending` | 待审草稿，字段同上 |
 | `wiki` | 梗快照：title / tags / summary / updated_at |
 | `buffer` | 待学消息，按 umo 分组，启动清 7 天前，超过 2 万行自动截断 |
