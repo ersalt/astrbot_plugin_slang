@@ -225,7 +225,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.4.3";
+const PAGE_BUILD = "v1.4.4";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -538,7 +538,7 @@ $("editSave").onclick = async () => {
   let r;
   try {
     r = await Promise.race([
-      api("yh/update", { content: editing.content, name, meaning, scope: $("editScope").value, old_scope: editing.scope }),
+      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope, name, meaning, scope: $("editScope").value }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), 10000)),
     ]);
   } catch (e) {
