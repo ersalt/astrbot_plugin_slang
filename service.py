@@ -97,6 +97,13 @@ class SlangService:
         self.invalidate()
         return rec
 
+    def _bump(self, repo, rec: dict, evidence: str, auto_note: str):
+        repo.update(rec["id"],
+                    count=(rec["count"] or 1) + 1,
+                    evidence=self.store.merge_evidence(
+                        rec["evidence"], self.store.pack_evidence(evidence)),
+                    auto_note=auto_note or rec["auto_note"])
+
     def submit(self, name: str, meaning: str, scope: str = "", aliases: str = "",
                evidence: str = "", auto_note: str = "", approved: bool = False,
                contributor: str = "") -> dict:
@@ -104,23 +111,43 @@ class SlangService:
         meaning = (meaning or "").strip()[:1000]
         if not name or not meaning:
             return {}
-        table = "auto" if approved else "auto_pending"
-        repo = self._repo(table)
-        existing = repo.find(name, scope)
-        if existing:
-            repo.update(existing["id"],
-                        count=(existing["count"] or 1) + 1,
-                        evidence=self.store.merge_evidence(
-                            existing["evidence"], self.store.pack_evidence(evidence)),
-                        auto_note=auto_note or existing["auto_note"])
+        auto = self._repo("auto")
+        pending = self._repo("auto_pending")
+        done = auto.find(name, scope)
+        if done:
+            # 已审优先：重复学习只累加，绝不再造一条同名待审
+            self._bump(auto, done, evidence, auto_note)
+        elif approved:
+            draft = pending.find(name, scope)
+            if draft:
+                auto.insert({
+                    "name": draft["name"], "aliases": draft["aliases"],
+                    "meaning": draft["meaning"], "scope": draft["scope"],
+                    "count": draft["count"], "auto_note": draft["auto_note"],
+                    "evidence": draft["evidence"], "contributor": draft["contributor"],
+                    "created_at": draft["created_at"],
+                })
+                pending.delete(draft["id"])
+            else:
+                auto.insert({
+                    "name": name, "meaning": meaning, "scope": scope,
+                    "aliases": aliases,
+                    "evidence": self.store.pack_evidence(evidence),
+                    "auto_note": auto_note, "contributor": contributor,
+                })
         else:
-            repo.insert({
-                "name": name, "meaning": meaning, "scope": scope,
-                "aliases": aliases, "evidence": self.store.pack_evidence(evidence),
-                "auto_note": auto_note, "contributor": contributor,
-            })
+            draft = pending.find(name, scope)
+            if draft:
+                self._bump(pending, draft, evidence, auto_note)
+            else:
+                pending.insert({
+                    "name": name, "meaning": meaning, "scope": scope,
+                    "aliases": aliases,
+                    "evidence": self.store.pack_evidence(evidence),
+                    "auto_note": auto_note, "contributor": contributor,
+                })
         self.invalidate()
-        return repo.find(name, scope) or {}
+        return (auto.find(name, scope) or pending.find(name, scope) or {})
 
     def update(self, table: str, old_name: str, old_scope: str,
                name: str = "", meaning: str = "", scope: str | None = None) -> dict:

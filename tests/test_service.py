@@ -77,6 +77,18 @@ class TestLearning(Base):
         self.svc.submit("过审词", "含义", scope="g1", approved=True)
         self.assertIsNotNone(self.store.repo("auto").find("过审词", "g1"))
 
+    def test_pending_does_not_duplicate_approved(self):
+        self.svc.submit("先去重", "已审含义", scope="g1", approved=True)
+        self.svc.submit("先去重", "又学到一次", scope="g1", approved=False)
+        self.assertIsNone(self.store.repo("auto_pending").find("先去重", "g1"))
+        self.assertEqual(self.store.repo("auto").find("先去重", "g1")["count"], 2)
+
+    def test_approved_promotes_pending(self):
+        self.svc.submit("转正", "草稿", scope="g1", approved=False)
+        self.svc.submit("转正", "草稿", scope="g1", approved=True)
+        self.assertIsNone(self.store.repo("auto_pending").find("转正", "g1"))
+        self.assertEqual(self.store.repo("auto").find("转正", "g1")["meaning"], "草稿")
+
     def test_duplicate_submit_only_counts(self):
         self.svc.submit("累加", "原含义", scope="g1", approved=True)
         self.svc.submit("累加", "新含义", scope="g1", approved=True)
@@ -100,7 +112,8 @@ class TestConflicts(Base):
 
     def test_approve_conflict_keeps_both(self):
         self.svc.submit("冲突", "自动已审", scope="g1", approved=True)
-        self.svc.submit("冲突", "自动待审", scope="g1", approved=False)
+        self.store.repo("auto_pending").insert({
+            "name": "冲突", "meaning": "自动待审", "scope": "g1"})
         with self.assertRaises(SlangError):
             self.svc.approve("auto_pending", "冲突", "g1")
         self.assertEqual(self.store.repo("auto").find("冲突", "g1")["meaning"], "自动已审")
@@ -115,7 +128,8 @@ class TestConflicts(Base):
 
     def test_reject_conflict_keeps_both(self):
         self.svc.submit("退回", "已审", scope="g1", approved=True)
-        self.svc.submit("退回", "待审", scope="g1", approved=False)
+        self.store.repo("auto_pending").insert({
+            "name": "退回", "meaning": "待审", "scope": "g1"})
         with self.assertRaises(SlangError):
             self.svc.approve("auto", "退回", "g1")
         self.assertIsNotNone(self.store.repo("auto").find("退回", "g1"))
@@ -123,7 +137,8 @@ class TestConflicts(Base):
 
     def test_bulk_skips_conflict(self):
         self.svc.submit("批量", "已审", scope="g1", approved=True)
-        self.svc.submit("批量", "待审", scope="g1", approved=False)
+        self.store.repo("auto_pending").insert({
+            "name": "批量", "meaning": "待审", "scope": "g1"})
         self.svc.submit("正常", "待审", scope="g1", approved=False)
         res = self.svc.bulk("approve", [
             {"table": "auto_pending", "name": "批量", "scope": "g1"},
