@@ -335,6 +335,16 @@ class JargonLite(Star):
     def _stats_web(self) -> dict:
         return self.svc.stats()
 
+    @staticmethod
+    def _error(where: str, exc: Exception) -> dict:
+        try:
+            logger.error(f"[slang] {where}失败: {exc}", exc_info=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"status": "error",
+                "message": f"{where}失败：{type(exc).__name__}: {exc}",
+                "data": {}}
+
     async def _group_names(self) -> dict:
         try:
             aliases = await self.context.get_db().get_umo_aliases()
@@ -445,6 +455,8 @@ class JargonLite(Star):
             self.svc.add_manual(content, meaning, scope=scope)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         where = "全局" if not scope else f"群 {scope}"
         return {"status": "ok", "message": f"「{content}」已录入（{where}）", "data": {}}
 
@@ -462,6 +474,8 @@ class JargonLite(Star):
             rec = self.svc.update(table, old_name, old_scope, name, meaning, scope)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         return {"status": "ok", "message": f"「{rec['name']}」已更新", "data": {}}
 
     async def api_delete(self):
@@ -473,6 +487,8 @@ class JargonLite(Star):
             self.svc.delete(table, name, scope)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         return {"status": "ok", "message": f"已删除「{name}」", "data": {}}
 
     async def api_approve(self):
@@ -484,6 +500,8 @@ class JargonLite(Star):
             action = self.svc.approve(table, name, scope)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         if action == "approved":
             target = SIDE["manual"] if table == "manual_pending" else SIDE["auto"]
             return {"status": "ok", "message": f"「{name}」已通过，移入{target}", "data": {}}
@@ -496,7 +514,10 @@ class JargonLite(Star):
         items = p.get("items")
         if action not in ("approve", "delete") or not isinstance(items, list) or not items:
             return {"status": "error", "message": "参数不对", "data": {}}
-        res = self.svc.bulk(action, items[:200])
+        try:
+            res = self.svc.bulk(action, items[:200])
+        except Exception as exc:  # noqa: BLE001
+            return self._error("批量操作", exc)
         if action == "approve":
             msg = f"已通过 {res['approved']} 条"
         else:
@@ -516,6 +537,8 @@ class JargonLite(Star):
                 return {"status": "ok", "message": f"「{name}」已设为全局", "data": {}}
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
+        except Exception as exc:  # noqa: BLE001
+            return self._error("操作", exc)
         return {"status": "ok", "message": f"「{name}」已经是全局条目", "data": {}}
 
     async def api_switch(self):

@@ -2,6 +2,11 @@
 
 本文件记录群语汇（astrbot_plugin_slang）的版本变更，最新版本排在最前。
 
+## v1.4.1
+
+- 改归属/修改/删除/审核增加兜底异常处理：出错时返回具体异常类型与原因，不再只显示 `Internal server error`。
+- 页面版本显示 `v1.4.1`。
+
 ## v1.4.0
 
 - 词条拆四张物理表：`manual` / `auto` / `manual_pending` / `auto_pending`，手动与自动彻底隔离。
