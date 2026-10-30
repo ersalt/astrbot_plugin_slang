@@ -285,7 +285,7 @@ class JargonLite(Star):
             logger.warning("[slang] 当前 AstrBot 不支持临时上下文，跳过注入")
             return
         req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
-        logger.debug(f"[slang] 注入{tag}")
+        logger.info(f"[slang] 注入 {tag}")
 
     # ---------------- WebUI ----------------
 
