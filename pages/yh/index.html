@@ -225,7 +225,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.3.2";
+const PAGE_BUILD = "v1.4.0";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -479,7 +479,7 @@ $("list").addEventListener("click", async e => {
 
   if (act === "approve"){
     try {
-      const r = await callApi("yh/approve", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending, from_jargon: !it.pending });
+      const r = await callApi("yh/approve", { table: it.table, name: it.content, scope: it.scope });
       showResult(r); if (r.status === "ok") reload();
     } catch (e) {
       showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
@@ -488,7 +488,7 @@ $("list").addEventListener("click", async e => {
   }
   if (act === "global"){
     try {
-      const r = await callApi("yh/toggle_global", { content: it.content });
+      const r = await callApi("yh/toggle_global", { table: it.table, name: it.content, scope: it.scope });
       showResult(r); if (r.status === "ok") reload();
     } catch (e) {
       showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
@@ -502,7 +502,7 @@ $("list").addEventListener("click", async e => {
       return;
     }
     try {
-      const r = await callApi("yh/delete", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending });
+      const r = await callApi("yh/delete", { table: it.table, name: it.content, scope: it.scope });
       showResult(r); if (r.status === "ok") reload();
     } catch (e) {
       showAlert("请求失败：" + ((e && e.message) || e), "操作失败");
@@ -710,9 +710,11 @@ $("bulkAll").onchange = () => {
 
 async function bulkAction(action){
   const ids = [...state.selected];
+  const items = ids.map(id => state.cache.get(String(id))).filter(Boolean)
+    .map(it => ({ table: it.table, name: it.content, scope: it.scope }));
   if (!ids.length) return;
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
-  const r = await api("yh/bulk", { action, ids });
+  const r = await api("yh/bulk", { action, items });
   if (r.status !== "ok"){
     showResult(r, "批量完成");
     return;

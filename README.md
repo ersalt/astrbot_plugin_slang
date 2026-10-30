@@ -22,9 +22,9 @@
       → 攒够 learn_frequency 条
       → LLM 提取（最多 extract_max 条）
       → 模型自审（certain？）
-          ├─ 是 → 直接进 jargon（黑话库，可注入）
-          └─ 否 → 进 pending（待审，不可注入）
-      → 每次 LLM 请求：关键词匹配 jargon（注入为临时上下文，不落库、不改 system prompt）
+          ├─ 是 → 直接进 auto（黑话库，可注入）
+          └─ 否 → 进 auto_pending（待审，不可注入）
+      → 每次 LLM 请求：内存关键词索引匹配已审词条（注入为临时上下文，不落库、不改 system prompt）
           ├─ 命中 → 注入（最多 inject_max 条）
           └─ 没命中 → 查 wiki（最多 1 条，带来源标注）
 ```
@@ -78,9 +78,9 @@
 
 后台插件详情里打开本插件页面，左侧四个入口：
 
-- **手动**：人工录入的词条（`source=manual`）
-- **黑话库**：模型学来的词条（`source=ai`）
-- **待审**：`pending` 表里的草稿，**永远不会被注入**
+- **手动**：`manual` 表，人工录入，可注入
+- **黑话库**：`auto` 表，模型学来，可注入
+- **待审**：`manual_pending` / `auto_pending` 两张表的草稿，**永远不会被注入**
 - **梗百科**：梗Wiki 快照，只读
 
 父项可折叠；群名过长省略号；数字圆圈右对齐。
@@ -105,22 +105,22 @@
 
 ## 审核模型
 
-只有两个状态，物理分表：
+四张物理表，按「来源 × 状态」拆分：
 
 | 表 | 含义 | 参与注入 |
 | --- | --- | --- |
-| `jargon` | 已通过 | ✅ |
-| `pending` | 待审 / 草稿 | ❌ |
+| `manual` | 手动 · 已通过 | ✅ |
+| `auto` | 自动 · 已通过 | ✅ |
+| `manual_pending` | 手动 · 待审 | ❌ |
+| `auto_pending` | 自动 · 待审 | ❌ |
 
-- 学习中模型自审通过的，**直接进 `jargon`**，理由存在 `auto_note`（页面显示为「理由：…」）
-- 没把握的进 `pending`，理由同样记录
-- 页面「审核」= 移动条目，不是删除；通过后从待审消失、出现在手动或黑话库
-- 同名词条按**作用域 + 来源**独立：手动与自动可以同名同群共存，互不覆盖；注入时同名的优先用手动
-- 学习与手动录入按来源独立；审核移动时目标表已有同名条目（不论来源）会拒绝，避免出现两条同名
+- 学习中模型自审通过的进 `auto`，没把握的进 `auto_pending`；手动录入直接进 `manual`
+- 页面「审核」= 搬行：待审通过后进同来源的已审表，已审驳回后回同来源的待审表
+- 操作按**自然键**定位：`(表, 名称, 作用域)`，id 只做内部主键
+- 手动与自动可以同名同群共存；但审核搬行时目标表已有同名会拒绝，避免出现两条同名
 - 重复提取只累加 `count`，不覆盖已写好的含义
-- 审核/驳回遇到目标表已有**同来源**同名同群条目时拒绝操作并保留两条；不同来源不冲突
-- 启动去重只合并「同来源 + 同作用域 + 含义完全相同」的重复项
-- 没有「人工通过 / 自审通过」两套标记，只有一个状态
+- 注入时同名词条**手动优先**
+- 启动时会把 1.x 的 `jargon` / `pending` 自动拆进四张表，备份为 `jargon.db.pre-four-tables.<时间>.bak`
 
 ## 梗百科
 
@@ -140,16 +140,36 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 
 | 表 | 内容 |
 | --- | --- |
-| `jargon` | 已通过词条：name / aliases / meaning / scope / source / contributor / count / auto_note / evidence |
-| `pending` | 待审草稿，字段同上 |
+| `manual` | 手动已审：name / aliases / meaning / scope / count / auto_note / evidence / contributor |
+| `auto` | 自动已审，字段同上 |
+| `manual_pending` | 手动待审，字段同上 |
+| `auto_pending` | 自动待审，字段同上 |
 | `wiki` | 梗快照：title / tags / summary / updated_at |
 | `buffer` | 待学消息，按 umo 分组，启动清 7 天前，超过 2 万行自动截断 |
-| `meta` | wiki_synced_at（上次同步水位） |
+| `meta` | schema_version、wiki_synced_at |
 
-## 已知限制
+四张词条表都有 `UNIQUE(name, scope)` 与 scope/updated/name 索引。
+
+### 代码分层
+
+```
+main.py       AstrBot 接入：指令、事件、Web API（只解析参数）
+service.py    业务规则：审核方向、冲突检查、注入索引、分页合并
+repo（store） 通用单表 CRUD，表名白名单，四张表复用同一实现
+index.py      内存关键词索引（首字符分桶），注入不再全表读取
+tests/        服务层回归测试
+```
+
+运行测试：
+
+```bash
+python -m unittest discover plugins/astrbot_plugin_slang/tests -v
+```
+
+## 已知限制## 已知限制
 
 - 关键词是子串匹配，半截词要靠 `aliases` 补
-- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有 `pending`；可用 `reject_words` 硬过滤掉固定不收的词
+- 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有待审表；可用 `reject_words` 硬过滤掉固定不收的词
 - 模型自审可能误放行；不放心就把 `auto_learn` 关掉，只手动录入
 - 每条含义最多 `max_meaning_chars` 字、单次最多 `inject_max` 条
 - 梗库只存摘要，没有正文和「怎么接」，需要更详细的用法得另做
