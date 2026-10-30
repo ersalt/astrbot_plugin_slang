@@ -340,14 +340,23 @@ class JargonLite(Star):
         table = str(p.get("table") or "").strip()
         if table in TABLES:
             return table
-        # 兼容旧页面：没有 table 时用 source + pending 推断
-        source = str(p.get("source") or "").strip()
-        pending = bool(p.get("pending"))
+        # 兼容旧页面：只接受明确的 source + pending 组合，猜不出返回空
+        if "pending" not in p:
+            return ""
+        source = str(p.get("source") or p.get("old_source") or "").strip()
         if source not in ("manual", "ai"):
-            source = "manual" if p.get("from_jargon") is False and p.get("source") == "manual" else "ai"
-        if pending:
+            return ""
+        if bool(p.get("pending")):
             return "manual_pending" if source == "manual" else "auto_pending"
         return "manual" if source == "manual" else "auto"
+
+    def _resolve_edit_table(self, name: str, scope: str, source: str = "") -> str:
+        """旧页面编辑没有 table：按自然键在四张表里找，唯一命中才改。"""
+        cands = [t for t in TABLES if self.store.repo(t).find(name, scope)]
+        if source in ("manual", "ai"):
+            want = "manual" if source == "manual" else "auto"
+            cands = [t for t in cands if t.startswith(want)]
+        return cands[0] if len(cands) == 1 else ""
 
     @staticmethod
     def _error(where: str, exc: Exception) -> dict:
@@ -476,7 +485,6 @@ class JargonLite(Star):
 
     async def api_update(self):
         p = await self._payload()
-        table = self._resolve_table(p)
         old_name = str(p.get("old_name") or p.get("content") or "").strip()
         old_scope = str(p.get("old_scope") or "").strip()
         name = str(p.get("name") or "").strip()
@@ -484,6 +492,14 @@ class JargonLite(Star):
         scope = str(p.get("scope") or "").strip() if "scope" in p else None
         if scope == "__global__":
             scope = ""
+        table = str(p.get("table") or "").strip()
+        if table not in TABLES:
+            table = self._resolve_edit_table(
+                old_name, old_scope, str(p.get("old_source") or p.get("source") or ""))
+        if table not in TABLES:
+            return {"status": "error",
+                    "message": "页面版本过旧，无法确定要修改哪张表。请按 Ctrl+F5 强制刷新后重试。",
+                    "data": {}}
         try:
             rec = self.svc.update(table, old_name, old_scope, name, meaning, scope)
         except SlangError as exc:
