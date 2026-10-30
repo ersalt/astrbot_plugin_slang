@@ -681,14 +681,19 @@ class JargonLite(Star):
         return text.split()[1:] if len(text.split()) > 1 else []
 
     @staticmethod
-    def _fmt(rec: dict) -> str:
+    def _clip(text: str, limit: int) -> str:
+        text = text or ""
+        return text if len(text) <= limit else text[:limit].rstrip("，。；; ") + "…"
+
+    @classmethod
+    def _fmt(cls, rec: dict) -> str:
         name = rec.get("content") or rec.get("name") or ""
         meaning = rec.get("meaning") or ""
         scope = rec.get("scope") or ""
         source = rec.get("source") or ""
         where = "全局" if not scope else f"群{scope}"
         src = "手动" if source == "manual" else "自动"
-        return f"{name}：{meaning[:40]} [{src} {where} ×{rec.get('count', 1)}]"
+        return f"{name}：{cls._clip(meaning, 40)} [{src} {where} ×{rec.get('count', 1)}]"
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @yh.command("list")
@@ -835,6 +840,7 @@ class JargonLite(Star):
             yield event.plain_result("这句话不会命中任何词条。")
             return
         yield event.plain_result(
-            f"命中 {len(hits)} 条：\n" + "\n".join(
-                f"[{SIDE.get(h['table'], h['table'])}] {h['name']}：{h['meaning'][:40]}"
+            f"命中 {len(hits)} 条（聊天只显示前 40 字，注入按 max_meaning_chars 截断）：\n"
+            + "\n".join(
+                f"[{SIDE.get(h['table'], h['table'])}] {h['name']}：{self._clip(h['meaning'], 40)}"
                 for h in hits))
