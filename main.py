@@ -511,10 +511,25 @@ class JargonLite(Star):
             old_scope = ""
         table = "pending" if self._in_pending(content, old_scope) else "jargon"
         cur = self.store._find(table, content, old_scope)
-        rec = self.store.update(table, str(cur["id"]) if cur else content,
+        if not cur:
+            return {"status": "error", "message": f"没找到「{content}」", "data": {}}
+
+        new_name = (name or content)[:32]
+        new_scope = scope if scope is not None else cur["scope"]
+        conflict = self.store._find(table, new_name, new_scope)
+        if conflict and conflict["id"] != cur["id"]:
+            where = "全局" if not new_scope else f"群 {new_scope}"
+            excerpt = (conflict["meaning"] or "").strip().replace("\n", " ")[:24]
+            action = "改归属" if new_scope != cur["scope"] else "改名"
+            return {"status": "error",
+                    "message": f"{action}失败：{where}已有同名词条「{new_name}」"
+                               f"（{excerpt}…，id {conflict['id']}），请先处理那条",
+                    "data": {}}
+
+        rec = self.store.update(table, str(cur["id"]),
                                 name or None, meaning[:500], scope)
         return {"status": "ok" if rec else "error",
-                "message": f"「{name or content}」已更新" if rec else "改不成，可能重名",
+                "message": f"「{new_name}」已更新" if rec else "改不成，可能重名",
                 "data": {}}
 
     def _in_pending(self, key: str, scope: str | None = None) -> bool:
