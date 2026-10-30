@@ -245,6 +245,14 @@ class JargonLite(Star):
         if not text:
             return
         entries = self.store.eligible(self._scope(event))
+        if entries:
+            best = {}
+            for e in entries:
+                key = (e["name"], e["scope"])
+                cur = best.get(key)
+                if cur is None or (e["source"] == "manual" and cur["source"] != "manual"):
+                    best[key] = e
+            entries = list(best.values())
         hits = match(entries, text, limit=self.inject_max) if entries else []
         hint, tag = "", ""
         if hits:
@@ -493,8 +501,8 @@ class JargonLite(Star):
             scope = ""
         if not content or not meaning:
             return {"status": "error", "message": "词条和含义都不能为空", "data": {}}
-        existing = (self.store._find("jargon", content, scope)
-                    or self.store._find("pending", content, scope))
+        existing = (self.store._find("jargon", content, scope, "manual")
+                    or self.store._find("pending", content, scope, "manual"))
         if existing:
             where = "全局" if not scope else f"群 {scope}"
             src = "手动" if existing["source"] == "manual" else "自动"
@@ -522,14 +530,15 @@ class JargonLite(Star):
         old_scope = str(p.get("old_scope")).strip() if p.get("old_scope") is not None else None
         if old_scope == "__global__":
             old_scope = ""
-        table = "pending" if self._in_pending(content, old_scope) else "jargon"
-        cur = self.store._find(table, content, old_scope)
+        old_source = str(p.get("old_source") or p.get("source") or "").strip() or None
+        table = "pending" if self._in_pending(content, old_scope, old_source) else "jargon"
+        cur = self.store._find(table, content, old_scope, old_source)
         if not cur:
             return {"status": "error", "message": f"没找到「{content}」", "data": {}}
 
         new_name = (name or content)[:32]
         new_scope = scope if scope is not None else cur["scope"]
-        conflict = self.store._find(table, new_name, new_scope)
+        conflict = self.store._find(table, new_name, new_scope, old_source)
         if conflict and conflict["id"] != cur["id"]:
             where = "全局" if not new_scope else f"群 {new_scope}"
             excerpt = (conflict["meaning"] or "").strip().replace("\n", " ")[:24]
@@ -549,12 +558,16 @@ class JargonLite(Star):
                 "message": f"「{new_name}」已更新" if rec else "改不成，可能重名",
                 "data": {}}
 
-    def _in_pending(self, key: str, scope: str | None = None) -> bool:
+    def _in_pending(self, key: str, scope: str | None = None,
+                    source: str | None = None) -> bool:
         sql = "SELECT 1 FROM pending WHERE (name = ? OR CAST(id AS TEXT) = ?)"
         params: list = [key, key]
         if scope is not None:
             sql += " AND scope = ?"
             params.append(scope)
+        if source is not None:
+            sql += " AND source = ?"
+            params.append(source)
         with self.store._lock:
             return bool(self.store._conn.execute(
                 sql + " LIMIT 1", params).fetchone())
@@ -570,7 +583,8 @@ class JargonLite(Star):
             if scope == "__global__":
                 scope = ""
         table = ("pending" if p.get("pending") else "jargon") if "pending" in p else None
-        ok = self.store.delete(content, scope, table)
+        source = str(p.get("source") or "").strip() or None
+        ok = self.store.delete(content, scope, table, source)
         return {"status": "ok" if ok else "error",
                 "message": f"已删除「{content}」" if ok else f"没找到「{content}」", "data": {}}
 
@@ -811,8 +825,8 @@ class JargonLite(Star):
             return
         where, name, meaning = tokens[1], tokens[2], " ".join(tokens[3:])
         scope = "" if where == "global" else self._scope(event)
-        existing = (self.store._find("jargon", name, scope)
-                    or self.store._find("pending", name, scope))
+        existing = (self.store._find("jargon", name, scope, "manual")
+                    or self.store._find("pending", name, scope, "manual"))
         if existing:
             yield event.plain_result(
                 f"「{name}」已存在（{existing['meaning'][:20]}…），未覆盖。要改内容请用 /yh approve 或网页修改。")

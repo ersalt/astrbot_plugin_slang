@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS jargon (
     evidence TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    UNIQUE(name, scope)
+    UNIQUE(name, scope, source)
 );
 CREATE INDEX IF NOT EXISTS idx_jargon_scope ON jargon(scope);
 CREATE INDEX IF NOT EXISTS idx_jargon_updated ON jargon(updated_at);
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS pending (
     evidence TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    UNIQUE(name, scope)
+    UNIQUE(name, scope, source)
 );
 CREATE INDEX IF NOT EXISTS idx_pending_scope ON pending(scope);
 CREATE INDEX IF NOT EXISTS idx_pending_updated ON pending(updated_at);
@@ -89,6 +89,7 @@ class JargonStore:
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._ensure_columns()
+            self._migrate_unique_source()
             self._conn.execute("DELETE FROM buffer WHERE ts < ?",
                                (time.time() - 7 * 86400,))
             self._conn.commit()
@@ -139,6 +140,39 @@ class JargonStore:
                         f"ALTER TABLE {table} ADD COLUMN contributor TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
 
+    def _migrate_unique_source(self):
+        """v1.4.2：唯一键从 (name, scope) 改为 (name, scope, source)。
+
+        手动与自动互不覆盖，需要允许同名同群不同来源并存。
+        SQLite 改约束只能重建表，重建前先备份整个库。
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='jargon'").fetchone()
+        if row and "UNIQUE(name, scope, source)" in (row[0] or ""):
+            return
+        try:
+            shutil.copy2(self.db_path, self.db_path + ".pre-unique-source.bak")
+        except Exception:
+            pass
+        jargon_rows = [dict(r) for r in self._conn.execute("SELECT * FROM jargon")]
+        pending_rows = [dict(r) for r in self._conn.execute("SELECT * FROM pending")]
+        self._conn.execute("DROP TABLE IF EXISTS jargon")
+        self._conn.execute("DROP TABLE IF EXISTS pending")
+        self._conn.executescript(SCHEMA)
+        for r in jargon_rows:
+            self._insert_full("jargon", r)
+        for r in pending_rows:
+            self._insert_full("pending", r)
+        self._conn.commit()
+
+    def _insert_full(self, table: str, r: dict):
+        cols = [d[1] for d in self._conn.execute(f"PRAGMA table_info({table})")]
+        data = {k: r.get(k) for k in cols if k in r}
+        names = ", ".join(data)
+        marks = ",".join("?" for _ in data)
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO {table}({names}) VALUES({marks})", tuple(data.values()))
+
     # ---------------- 缓冲 ----------------
 
     def buffer_add(self, umo: str, sender: str, text: str) -> int:
@@ -179,32 +213,36 @@ class JargonStore:
         now = time.time()
         with self._lock:
             row = self._conn.execute(
-                f"SELECT * FROM {table} WHERE name = ? AND scope = ?",
-                (name, scope)).fetchone()
+                f"SELECT * FROM {table} WHERE name = ? AND scope = ? AND source = ?",
+                (name, scope, source)).fetchone()
             if row:
                 rec = dict(row)
+                rid = rec["id"]
                 self._conn.execute(
                     f"""UPDATE {table} SET meaning = ?, aliases = ?, count = count + 1,
                         evidence = ?, auto_note = ?, updated_at = ? WHERE id = ?""",
                     (meaning, aliases or rec["aliases"],
                      self._merge_evidence(rec["evidence"], evidence),
-                     auto_note or rec["auto_note"], now, rec["id"]))
+                     auto_note or rec["auto_note"], now, rid))
             else:
-                self._conn.execute(
+                cur = self._conn.execute(
                     f"""INSERT INTO {table}(name, aliases, meaning, scope, source,
                         contributor, count, auto_note, evidence, created_at, updated_at)
                         VALUES(?,?,?,?,?,?,1,?,?,?,?)""",
                     (name, aliases, meaning, scope, source, contributor,
                      auto_note, self._pack_evidence(evidence), now, now))
+                rid = cur.lastrowid
             self._conn.commit()
-        return self.get(name, table) or {}
+            out = self._conn.execute(
+                f"SELECT * FROM {table} WHERE id = ?", (rid,)).fetchone()
+            return dict(out) if out else {}
 
     def add_manual(self, name: str, meaning: str, scope: str = "",
                    aliases: str = "") -> dict:
         # 手动录入是明确的人工操作：清掉同名的待审草稿，避免两个桶里各一条
         with self._lock:
             self._conn.execute(
-                "DELETE FROM pending WHERE name = ? AND scope = ?",
+                "DELETE FROM pending WHERE name = ? AND scope = ? AND source = 'manual'",
                 ((name or "").strip()[:32], scope))
             self._conn.commit()
         return self.upsert("jargon", name, meaning, scope=scope,
@@ -319,11 +357,11 @@ class JargonStore:
         return self.update("jargon", key, name=new_name)
 
     def delete(self, key: str, scope: str | None = None,
-               table: str | None = None) -> bool:
+               table: str | None = None, source: str | None = None) -> bool:
         tables = [table] if table in ("jargon", "pending") else ["pending", "jargon"]
         with self._lock:
             for t in tables:
-                rec = self._find(t, key, scope)
+                rec = self._find(t, key, scope, source)
                 if rec:
                     self._conn.execute(f"DELETE FROM {t} WHERE id = ?", (rec["id"],))
                     self._conn.commit()
@@ -348,7 +386,7 @@ class JargonStore:
         with self._lock:
             for table in ("jargon", "pending"):
                 row = self._conn.execute(
-                    f"SELECT * FROM {table} WHERE name = ? AND scope = ?",
+                    f"SELECT * FROM {table} WHERE name = ? AND scope = ? AND source = 'ai'",
                     (name, scope)).fetchone()
                 if not row:
                     continue
@@ -370,7 +408,7 @@ class JargonStore:
         return self.get(name, table) or {}
 
     def approve(self, key: str, scope: str | None = None,
-                only: str | None = None) -> str | None:
+                only: str | None = None, source: str | None = None) -> str | None:
         """待审 -> 黑话库；已过审 -> 驳回待审。
 
         scope 给定只处理该作用域；only 指定只查 pending 或 jargon，
@@ -378,9 +416,9 @@ class JargonStore:
         """
         with self._lock:
             if only != "jargon":
-                prow = self._find("pending", key, scope)
+                prow = self._find("pending", key, scope, source)
                 if prow:
-                    clash = self._find("jargon", prow["name"], prow["scope"])
+                    clash = self._find("jargon", prow["name"], prow["scope"], prow["source"])
                     if clash:
                         return {"action": "conflict_jargon", "conflict": clash}
                     self._promote(prow)
@@ -388,9 +426,9 @@ class JargonStore:
                     self._conn.commit()
                     return {"action": "approved", "conflict": None}
             if only != "pending":
-                jrow = self._find("jargon", key, scope)
+                jrow = self._find("jargon", key, scope, source)
                 if jrow:
-                    clash = self._find("pending", jrow["name"], jrow["scope"])
+                    clash = self._find("pending", jrow["name"], jrow["scope"], jrow["source"])
                     if clash:
                         return {"action": "conflict_pending", "conflict": clash}
                     self._demote(jrow)
@@ -399,12 +437,16 @@ class JargonStore:
                     return {"action": "pending", "conflict": None}
         return None
 
-    def _find(self, table: str, key: str, scope: str | None) -> dict | None:
+    def _find(self, table: str, key: str, scope: str | None,
+              source: str | None = None) -> dict | None:
         sql = f"SELECT * FROM {table} WHERE name = ?"
         params: list = [str(key)]
         if scope is not None:
             sql += " AND scope = ?"
             params.append(scope)
+        if source is not None:
+            sql += " AND source = ?"
+            params.append(source)
         sql += " ORDER BY updated_at DESC LIMIT 1"
         row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None
@@ -412,8 +454,8 @@ class JargonStore:
     def _promote(self, rec: dict):
         """待审 -> 黑话库：已有同名同群词条时只累加次数，保留原含义。"""
         cur = self._conn.execute(
-            "SELECT * FROM jargon WHERE name = ? AND scope = ?",
-            (rec["name"], rec["scope"])).fetchone()
+            "SELECT * FROM jargon WHERE name = ? AND scope = ? AND source = ?",
+            (rec["name"], rec["scope"], rec["source"])).fetchone()
         now = time.time()
         if cur:
             c = dict(cur)
@@ -435,8 +477,8 @@ class JargonStore:
     def _demote(self, rec: dict):
         """黑话库 -> 待审：已有同名同群草稿时合并次数，内容以被驳回的这条为准。"""
         cur = self._conn.execute(
-            "SELECT * FROM pending WHERE name = ? AND scope = ?",
-            (rec["name"], rec["scope"])).fetchone()
+            "SELECT * FROM pending WHERE name = ? AND scope = ? AND source = ?",
+            (rec["name"], rec["scope"], rec["source"])).fetchone()
         now = time.time()
         if cur:
             c = dict(cur)
@@ -489,7 +531,7 @@ class JargonStore:
                     continue
                 rec = dict(row)
                 if action == "approve":
-                    if self._find("jargon", rec["name"], rec["scope"]):
+                    if self._find("jargon", rec["name"], rec["scope"], rec["source"]):
                         skipped += 1
                         continue
                     self._promote(rec)

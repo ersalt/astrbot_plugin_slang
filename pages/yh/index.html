@@ -224,7 +224,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.4.1";
+const PAGE_BUILD = "v1.4.2";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -232,10 +232,15 @@ const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: 
 
 function showAlert(msg, title = "提示"){
   $("alertTitle").textContent = title;
-  $("alertBody").textContent = msg || "操作失败";
+  $("alertBody").textContent = msg || "服务器没有返回内容";
   $("alertMask").classList.add("on");
 }
 $("alertOk").onclick = () => $("alertMask").classList.remove("on");
+
+function showResult(r, okTitle = "完成"){
+  if (r.status === "ok") showAlert(r.message || "操作成功", okTitle);
+  else showAlert(r.message || "操作失败：服务器未返回原因", "操作失败");
+}
 
 window.addEventListener("error", e => showAlert("页面脚本出错：" + (e.message || "未知"), "页面出错"));
 window.addEventListener("unhandledrejection", e =>
@@ -464,8 +469,8 @@ $("list").addEventListener("click", async e => {
   const act = btn.dataset.act;
 
   if (act === "approve"){
-    const r = await api("yh/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
-    showAlert(r.message); if (r.status === "ok") reload(); return;
+    const r = await api("yh/approve", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending, from_jargon: !it.pending });
+    showResult(r); if (r.status === "ok") reload(); return;
   }
   if (act === "global"){
     const r = await api("yh/toggle_global", { content: it.content });
@@ -477,8 +482,8 @@ $("list").addEventListener("click", async e => {
       setTimeout(() => { btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent="删除"; }, 2600);
       return;
     }
-    const r = await api("yh/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
-    showAlert(r.message); if (r.status === "ok") reload(); return;
+    const r = await api("yh/delete", { content: it.content, scope: it.scope, source: it.source, pending: !!it.pending });
+    showResult(r); if (r.status === "ok") reload(); return;
   }
   if (act === "edit"){
     editing = it;
@@ -542,7 +547,7 @@ $("addSave").onclick = async () => {
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
   const r = await api("yh/add", { content: name, meaning, scope });
-  showAlert(r.message || "已录入", "录入结果");
+  showResult(r, "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
 
@@ -685,8 +690,7 @@ async function bulkAction(action){
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
   const r = await api("yh/bulk", { action, ids });
   if (r.status !== "ok"){
-    showAlert(r.message || "服务器未返回原因，请查看 AstrBot 日志", "批量操作失败");
-    showAlert(r.message || "操作失败", "批量操作失败");
+    showResult(r, "批量完成");
     return;
   }
   showAlert(r.message || "操作完成", "完成");
