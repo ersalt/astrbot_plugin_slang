@@ -152,6 +152,10 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 
 梗词条来自 cnmeme.wiki，版权归站点及原作者；本项目不打包词库，只本地缓存，注入时保留来源标注。
 
+## 更新日志
+
+版本变更见 [CHANGELOG.md](./CHANGELOG.md)。
+
 ## 路线图
 
 待更新项见 [TODO.md](./TODO.md)。
