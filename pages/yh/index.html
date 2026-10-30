@@ -124,10 +124,6 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 .form-row .field{flex:1;min-width:140px}
 
 .mask.alert{z-index:40}
-.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
-  background:#1b1c1f;color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;
-  opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
-.toast.show{opacity:.94}
 
 @media (max-width:820px){
   .app{flex-direction:column;padding:12px}
@@ -224,7 +220,6 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
@@ -242,13 +237,9 @@ function showAlert(msg, title = "提示"){
 }
 $("alertOk").onclick = () => $("alertMask").classList.remove("on");
 
-function toast(msg, ms = 2600){
-  const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), ms);
-}
-window.addEventListener("error", e => toast("页面脚本出错：" + (e.message || "未知")));
+window.addEventListener("error", e => showAlert("页面脚本出错：" + (e.message || "未知"), "页面出错"));
 window.addEventListener("unhandledrejection", e =>
-  toast("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知")));
+  showAlert("请求失败：" + ((e.reason && e.reason.message) || e.reason || "未知"), "请求失败"));
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -474,11 +465,11 @@ $("list").addEventListener("click", async e => {
 
   if (act === "approve"){
     const r = await api("yh/approve", { content: it.content, scope: it.scope, pending: !!it.pending, from_jargon: !it.pending });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    showAlert(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "global"){
     const r = await api("yh/toggle_global", { content: it.content });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    showAlert(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "del"){
     if (!btn.dataset.armed){
@@ -487,7 +478,7 @@ $("list").addEventListener("click", async e => {
       return;
     }
     const r = await api("yh/delete", { content: it.content, scope: it.scope, pending: !!it.pending });
-    toast(r.message); if (r.status === "ok") reload(); return;
+    showAlert(r.message); if (r.status === "ok") reload(); return;
   }
   if (act === "edit"){
     editing = it;
@@ -507,7 +498,7 @@ $("editSave").onclick = async () => {
   const name = $("editName").value.trim();
   const meaning = $("editMeaning").value.trim();
   if (!name || !meaning){
-    toast("词条名和内容都不能为空", 4000);
+    showAlert("词条名和内容都不能为空", "没法保存");
     showAlert("词条名和内容都不能为空", "没法保存");
     return;
   }
@@ -521,17 +512,17 @@ $("editSave").onclick = async () => {
     ]);
   } catch (e) {
     const msg = "请求失败：" + ((e && e.message) || e);
-    toast(msg, 5000); showAlert(msg, "没能保存");
+    showAlert(msg, "没能保存");
     return;
   }
   if (r.status === "ok"){
-    toast(r.message);
+    showAlert(r.message, "已保存");
     $("editMask").classList.remove("on"); editing = null; reload();
     return;
   }
   err.textContent = r.message || "保存失败";
   err.style.display = "block";
-  toast(r.message, 5000);
+  showAlert(r.message, "保存失败");
   showAlert(r.message || "保存失败", "没能保存");
 };
 
@@ -551,9 +542,9 @@ $("addSave").onclick = async () => {
   const name = $("addName").value.trim();
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
-  if (!name || !meaning) return toast("词条名和内容都不能填");
+  if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
   const r = await api("yh/add", { content: name, meaning, scope });
-  toast(r.message);
+  showAlert(r.message);
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
 
@@ -635,7 +626,7 @@ function fieldHTML(f, value){
 
 $("settingsBtn").onclick = async () => {
   const r = await api("yh/config", {});
-  if (r.status !== "ok"){ toast(r.message || "读取配置失败"); return; }
+  if (r.status !== "ok"){ showAlert(r.message || "读取配置失败", "读取配置失败"); return; }
   renderSettings(r.data);
   $("setMask").classList.add("on");
 };
@@ -651,7 +642,7 @@ $("setSave").onclick = async () => {
       : el.value;
   });
   const r = await api("yh/config", payload);
-  toast(r.message || "已保存");
+  showAlert(r.message || "已保存", "已保存");
   if (r.status === "ok"){
     $("setMask").classList.remove("on");
     reload();
@@ -696,11 +687,11 @@ async function bulkAction(action){
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
   const r = await api("yh/bulk", { action, ids });
   if (r.status !== "ok"){
-    toast(r.message || "操作失败", 5000);
+    showAlert(r.message || "操作失败", "操作失败");
     showAlert(r.message || "操作失败", "批量操作失败");
     return;
   }
-  toast(r.message || "操作完成");
+  showAlert(r.message || "操作完成", "操作完成");
   reload();
 }
 

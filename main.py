@@ -493,6 +493,16 @@ class JargonLite(Star):
             scope = ""
         if not content or not meaning:
             return {"status": "error", "message": "词条和含义都不能为空", "data": {}}
+        existing = (self.store._find("jargon", content, scope)
+                    or self.store._find("pending", content, scope))
+        if existing:
+            where = "全局" if not scope else f"群 {scope}"
+            src = "手动" if existing["source"] == "manual" else "自动"
+            excerpt = (existing["meaning"] or "").strip().replace("\n", " ")[:20]
+            return {"status": "error",
+                    "message": f"「{content}」在 {where} 已存在（{src}：{excerpt}…，id {existing['id']}），"
+                               "未覆盖。要改内容请用「修改」。",
+                    "data": {}}
         self.store.add_manual(content, meaning, scope=scope)
         where = "全局" if not scope else f"群 {scope}"
         return {"status": "ok", "message": f"「{content}」已录入（{where}）", "data": {}}
@@ -784,6 +794,12 @@ class JargonLite(Star):
             return
         where, name, meaning = tokens[1], tokens[2], " ".join(tokens[3:])
         scope = "" if where == "global" else self._scope(event)
+        existing = (self.store._find("jargon", name, scope)
+                    or self.store._find("pending", name, scope))
+        if existing:
+            yield event.plain_result(
+                f"「{name}」已存在（{existing['meaning'][:20]}…），未覆盖。要改内容请用 /yh approve 或网页修改。")
+            return
         rec = self.store.add_manual(name, meaning, scope=scope)
         yield event.plain_result(f"已录入并标记人工过关：\n{self._fmt(rec)}")
 
