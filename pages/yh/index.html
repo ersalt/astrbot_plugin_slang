@@ -121,9 +121,10 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 .form-row{display:flex;gap:10px;flex-wrap:wrap}
 .form-row .field{flex:1;min-width:140px}
 
+.mask.alert{z-index:40}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
   background:#1b1c1f;color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;
-  opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
+  opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
 .toast.show{opacity:.94}
 
 @media (max-width:820px){
@@ -213,6 +214,14 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   </div>
 </div>
 
+<div class="mask alert" id="alertMask">
+  <div class="card modal" style="width:min(420px,100%)">
+    <h3 id="alertTitle">提示</h3>
+    <div id="alertBody" style="font-size:13px;line-height:1.7;white-space:pre-wrap;color:#3a3b40"></div>
+    <div class="modal-foot"><button class="primary" id="alertOk">知道了</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -222,6 +231,13 @@ const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
   selected: new Set() };
+
+function showAlert(msg, title = "提示"){
+  $("alertTitle").textContent = title;
+  $("alertBody").textContent = msg || "操作失败";
+  $("alertMask").classList.add("on");
+}
+$("alertOk").onclick = () => $("alertMask").classList.remove("on");
 
 function toast(msg, ms = 2600){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -499,6 +515,7 @@ $("editSave").onclick = async () => {
   err.textContent = r.message || "保存失败";
   err.style.display = "block";
   toast(r.message, 5000);
+  showAlert(r.message || "保存失败", "没能保存");
 };
 
 /* ---------- 录入 ---------- */
@@ -661,8 +678,13 @@ async function bulkAction(action){
   if (!ids.length) return;
   if (action === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待审？`)) return;
   const r = await api("yh/bulk", { action, ids });
+  if (r.status !== "ok"){
+    toast(r.message || "操作失败", 5000);
+    showAlert(r.message || "操作失败", "批量操作失败");
+    return;
+  }
   toast(r.message || "操作完成");
-  if (r.status === "ok") reload();
+  reload();
 }
 
 $("bulkApprove").onclick = () => bulkAction("approve");
