@@ -76,12 +76,11 @@ class TestManualCrud(Base):
             self.svc.add_manual("重复", "第二版", scope="g1")
         self.assertEqual(self.store.repo("manual").find("重复", "g1")["meaning"], "第一版")
 
-    def test_keywords_match_and_extra(self):
+    def test_keywords_match(self):
         self.svc.add_manual("梁文锋", "DeepSeek 创始人", scope="",
-                            keywords="梁文峰,梁文谷", extra="常被误写")
+                            keywords="梁文峰,梁文谷")
         row = self.store.repo("manual").find("梁文锋", "")
         self.assertEqual(row["keywords"], "梁文峰,梁文谷")
-        self.assertEqual(row["extra"], "常被误写")
         hits = self.svc.match("现在是梁文峰还是梁文谷", "", 3)
         self.assertEqual(hits[0]["name"], "梁文锋")
 
@@ -287,7 +286,6 @@ class TestMigration(Base):
         try:
             row = store.repo("manual").find("旧词", "")
             self.assertEqual(row["keywords"], "旧别名,旧写法")
-            self.assertIn("extra", row)
             self.assertEqual(store.meta_get("schema_version"), "5")
         finally:
             store.close()

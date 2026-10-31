@@ -48,7 +48,6 @@ def public(row: dict, table: str) -> dict:
         "is_global": not row["scope"],
         "aliases": row.get("aliases", ""),
         "keywords": row.get("keywords", ""),
-        "extra": row.get("extra", ""),
         "auto_note": row["auto_note"],
         "contributor": row["contributor"],
         "evidence": row["evidence"],
@@ -93,7 +92,7 @@ class SlangService:
         return ",".join(parts)[:300]
 
     def add_manual(self, name: str, meaning: str, scope: str = "",
-                   keywords: str = "", extra: str = "", aliases: str = "") -> dict:
+                   keywords: str = "", aliases: str = "") -> dict:
         name = (name or "").strip()[:32]
         meaning = (meaning or "").strip()[:1000]
         if not name or not meaning:
@@ -106,7 +105,6 @@ class SlangService:
         rec = self._repo("manual").insert({
             "name": name, "meaning": meaning, "scope": scope,
             "aliases": "", "keywords": keywords,
-            "extra": (extra or "").strip()[:1000],
             "evidence": '["手动录入"]', "contributor": "手动录入",
         })
         self.invalidate()
@@ -142,7 +140,7 @@ class SlangService:
             if draft:
                 auto.insert({
                     "name": draft["name"], "aliases": draft["aliases"],
-                    "keywords": draft.get("keywords", ""), "extra": draft.get("extra", ""),
+                    "keywords": draft.get("keywords", ""),
                     "meaning": draft["meaning"], "scope": draft["scope"],
                     "count": draft["count"], "auto_note": draft["auto_note"],
                     "evidence": draft["evidence"], "contributor": draft["contributor"],
@@ -172,7 +170,7 @@ class SlangService:
 
     def update(self, table: str, old_name: str, old_scope: str,
                name: str = "", meaning: str = "", scope: str | None = None,
-               keywords: str | None = None, extra: str | None = None) -> dict:
+               keywords: str | None = None) -> dict:
         repo = self._repo(table)
         rec = repo.find(old_name, old_scope)
         if not rec:
@@ -191,8 +189,7 @@ class SlangService:
                           meaning=(meaning or rec["meaning"]).strip()[:1000],
                           scope=new_scope,
                           keywords=(self._norm_keywords(keywords)
-                                    if keywords is not None else None),
-                          extra=(extra.strip()[:1000] if extra is not None else None))
+                                    if keywords is not None else None))
         if not out:
             raise SlangError("改名或改归属失败，可能重名")
         self.invalidate()

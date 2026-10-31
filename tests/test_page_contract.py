@@ -29,11 +29,11 @@ class TestPageContract(unittest.TestCase):
 
     def test_entry_fields(self):
         self.assertIn('id="editKeywords"', self.html)
-        self.assertIn('id="editExtra"', self.html)
         self.assertIn('id="addKeywords"', self.html)
-        self.assertIn('id="addExtra"', self.html)
+        self.assertIn('id="editCount"', self.html)
+        self.assertIn('id="addCount"', self.html)
         self.assertIn("keywords:", self.html)
-        self.assertIn("extra:", self.html)
+        self.assertNotIn("editExtra", self.html)
 
     def test_add_preflight_lookup(self):
         self.assertIn('"yh/lookup"', self.html)

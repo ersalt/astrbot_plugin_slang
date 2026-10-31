@@ -510,15 +510,14 @@ class JargonLite(Star):
     async def api_add(self):
         p = await self._payload()
         content = str(p.get("content") or "").strip()[:32]
-        meaning = str(p.get("meaning") or "").strip()[:500]
+        meaning = str(p.get("meaning") or "").strip()[:1000]
         scope = str(p.get("scope") or "").strip()
         if scope == "__global__":
             scope = ""
         keywords = str(p.get("keywords") or p.get("aliases") or "").strip()
-        extra = str(p.get("extra") or "").strip()
         try:
             self.svc.add_manual(content, meaning, scope=scope,
-                                keywords=keywords, extra=extra)
+                                keywords=keywords)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001
@@ -541,7 +540,6 @@ class JargonLite(Star):
         if scope == "__global__":
             scope = ""
         keywords = str(p.get("keywords") or "").strip() if "keywords" in p else None
-        extra = str(p.get("extra") or "").strip() if "extra" in p else None
         table = str(p.get("table") or "").strip()
         if table not in TABLES:
             table = self._resolve_edit_table(
@@ -552,7 +550,7 @@ class JargonLite(Star):
                     "data": {}}
         try:
             rec = self.svc.update(table, old_name, old_scope, name, meaning, scope,
-                                  keywords=keywords, extra=extra)
+                                  keywords=keywords)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001

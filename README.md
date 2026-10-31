@@ -97,12 +97,11 @@
 | 词条名 | 展示名，默认也作为触发词 |
 | 关键词 | 触发注入的词，逗号分隔；不填则只用词条名 |
 | 内容 | 注入给模型的含义 |
-| 其他 | 备注、出处、补充说明，只展示、不参与注入 |
 
 每条三个按钮：
 
 - **审核**：待审里 = 通过（手动草稿进手动，自动草稿进黑话库）；已审 = 驳回回对应待审表
-- **修改**：改名称、关键词、含义、其他、归属（全局 / 某个群）
+- **修改**：改名称、关键词、含义、归属（全局 / 某个群）
 - **删除**：二次确认，直接删掉
 
 待审列表支持勾选、全选本页、批量通过/删除。
@@ -127,7 +126,7 @@
 | `auto_pending` | 自动 · 待审 | ❌ |
 
 - 学习中模型自审通过的进 `auto`，没把握的进 `auto_pending`；手动录入直接进 `manual`
-- 匹配时用「词条名 + 关键词」；`其他` 不参与注入
+- 匹配时用「词条名 + 关键词」
 - 学习按 `learn_batch_size` 分批提取，合并候选后统一自审，批间等待给前台让路
 - 页面「审核」= 搬行：待审通过后进同来源的已审表，已审驳回后回同来源的待审表
 - 操作按**自然键**定位：`(表, 名称, 作用域)`，id 只做内部主键
@@ -154,7 +153,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 
 | 表 | 内容 |
 | --- | --- |
-| `manual` | 手动已审：name / keywords / meaning / extra / scope / count / auto_note / evidence / contributor |
+| `manual` | 手动已审：name / keywords / meaning / scope / count / auto_note / evidence / contributor |
 | `auto` | 自动已审，字段同上 |
 | `manual_pending` | 手动待审，字段同上 |
 | `auto_pending` | 自动待审，字段同上 |

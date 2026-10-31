@@ -27,7 +27,6 @@ CREATE TABLE IF NOT EXISTS {t} (
     name TEXT NOT NULL,
     aliases TEXT NOT NULL DEFAULT '',
     keywords TEXT NOT NULL DEFAULT '',
-    extra TEXT NOT NULL DEFAULT '',
     meaning TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 1,
@@ -85,11 +84,11 @@ class Repo:
         now = time.time()
         with self.lock:
             cur = self.conn.execute(
-                f"""INSERT INTO {self.t}(name, aliases, keywords, extra, meaning, scope,
+                f"""INSERT INTO {self.t}(name, aliases, keywords, meaning, scope,
                     count, auto_note, evidence, contributor, created_at, updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (data["name"], data.get("aliases", ""), data.get("keywords", ""),
-                 data.get("extra", ""), data.get("meaning", ""),
+                 data.get("meaning", ""),
                  data.get("scope", ""), data.get("count", 1),
                  data.get("auto_note", ""), data.get("evidence", "[]"),
                  data.get("contributor", ""),
@@ -99,7 +98,7 @@ class Repo:
         return self.get(rid)
 
     def update(self, rid: int, **fields) -> dict | None:
-        allowed = ("name", "aliases", "keywords", "extra", "meaning", "scope",
+        allowed = ("name", "aliases", "keywords", "meaning", "scope",
                    "count", "auto_note", "evidence", "contributor")
         sets, params = [], []
         for k, v in fields.items():
@@ -206,15 +205,12 @@ class JargonStore:
         self.conn.commit()
 
     def _ensure_columns(self):
-        """给四张表补 keywords / extra 列，兼容 1.4.x 升级。"""
+        """给四张表补 keywords 列，兼容 1.4.x 升级。"""
         for t in TABLES:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({t})")}
             if "keywords" not in cols:
                 self.conn.execute(
                     f"ALTER TABLE {t} ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
-            if "extra" not in cols:
-                self.conn.execute(
-                    f"ALTER TABLE {t} ADD COLUMN extra TEXT NOT NULL DEFAULT ''")
             # 1.4.x 的 aliases 迁进 keywords，旧页面/旧数据仍能触发
             self.conn.execute(
                 f"UPDATE {t} SET keywords = aliases "
@@ -281,12 +277,12 @@ class JargonStore:
                         scope = ""
 
                     self.conn.execute(
-                        f"""INSERT OR IGNORE INTO {table}(name, aliases, keywords, extra,
+                        f"""INSERT OR IGNORE INTO {table}(name, aliases, keywords,
                             meaning, scope, count, auto_note, evidence, contributor,
                             created_at, updated_at)
-                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                         (name, row.get("aliases") or "",
-                         row.get("keywords") or row.get("aliases") or "", "",
+                         row.get("keywords") or row.get("aliases") or "",
                          meaning, scope,
                          row.get("count") or 1, row.get("auto_note") or "",
                          row.get("evidence") or "[]",

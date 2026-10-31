@@ -27,7 +27,7 @@ data/plugin_data/astrbot_plugin_slang/jargon.db
   └─ meta                                             同步水位、schema_version
 ```
 
-词条字段：`name`（词条名）、`keywords`（关键词）、`meaning`（内容）、`extra`（其他备注）、`scope`（作用域）、`contributor`（最早提到的群友昵称/手动录入）、`count`、`evidence`。
+词条字段：`name`（词条名）、`keywords`（关键词）、`meaning`（内容）、`scope`（作用域）、`contributor`（最早提到的群友昵称/手动录入）、`count`、`evidence`。
 
 缓冲字段：`umo`（会话标识）、`sender`（昵称）、`text`（消息原文，超过 500 字截断）、`ts`（时间戳）。
 
