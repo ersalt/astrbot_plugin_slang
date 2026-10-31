@@ -512,7 +512,12 @@ class JargonLite(Star):
         except Exception as exc:  # noqa: BLE001
             return self._error("操作", exc)
         where = "全局" if not scope else f"群 {scope}"
-        return {"status": "ok", "message": f"「{content}」已录入（{where}）", "data": {}}
+        msg = f"「{content}」已录入（{where}）"
+        # 手动/自动隔离：自动区已有同名时仍允许手动新增，但必须说清楚没覆盖
+        if (self.store.repo("auto").find(content, scope)
+                or self.store.repo("auto_pending").find(content, scope)):
+            msg += "；黑话库已有同名条目，未覆盖"
+        return {"status": "ok", "message": msg, "data": {}}
 
     async def api_update(self):
         p = await self._payload()

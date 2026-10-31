@@ -584,8 +584,14 @@ $("addSave").onclick = async () => {
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
-  const r = await api("yh/add", { content: name, meaning, scope,
-    keywords: $("addKeywords").value.trim(), extra: $("addExtra").value.trim() });
+  let r;
+  try {
+    r = await callApi("yh/add", { content: name, meaning, scope,
+      keywords: $("addKeywords").value.trim(), extra: $("addExtra").value.trim() });
+  } catch (e) {
+    showAlert("请求失败：" + ((e && e.message) || e), "录入失败");
+    return;
+  }
   showResult(r, "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
