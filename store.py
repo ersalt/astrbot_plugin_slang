@@ -168,6 +168,7 @@ class JargonStore:
         with self._lock:
             self._init_schema()
             self._migrate_legacy()
+            self._drop_legacy_extra()
             if self.meta_get("schema_version") != "5":
                 self.meta_set("schema_version", "5")
             self.conn.execute("DELETE FROM buffer WHERE ts < ?",
@@ -215,6 +216,32 @@ class JargonStore:
             self.conn.execute(
                 f"UPDATE {t} SET keywords = aliases "
                 "WHERE keywords = '' AND aliases <> ''")
+        self.conn.commit()
+
+    def _drop_legacy_extra(self):
+        """删除 1.5.0 开发期短暂存在的 extra 列，保持与正式 schema 一致。"""
+        targets = []
+        for t in TABLES:
+            cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({t})")}
+            if "extra" in cols:
+                targets.append(t)
+        if not targets:
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = f"{self.db_path}.pre-drop-extra.{stamp}.bak"
+        try:
+            self.conn.execute("VACUUM INTO ?", (backup,))
+        except Exception:
+            try:
+                shutil.copy2(self.db_path, backup)
+            except Exception:
+                pass
+        for t in targets:
+            try:
+                self.conn.execute(f"ALTER TABLE {t} DROP COLUMN extra")
+            except sqlite3.OperationalError:
+                # 老 SQLite 不支持 DROP COLUMN 时保留该列，不影响运行
+                pass
         self.conn.commit()
 
     # ---------- 旧库迁移 ----------

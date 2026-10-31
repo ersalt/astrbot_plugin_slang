@@ -290,6 +290,33 @@ class TestMigration(Base):
         finally:
             store.close()
 
+    def test_drop_legacy_extra_column(self):
+        path = pathlib.Path(self.tmp.name) / "withextra.db"
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+        CREATE TABLE manual (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            aliases TEXT NOT NULL DEFAULT '', keywords TEXT NOT NULL DEFAULT '',
+            extra TEXT NOT NULL DEFAULT '', meaning TEXT NOT NULL DEFAULT '',
+            scope TEXT NOT NULL DEFAULT '', count INTEGER DEFAULT 1,
+            auto_note TEXT DEFAULT '', evidence TEXT DEFAULT '[]',
+            contributor TEXT DEFAULT '', created_at REAL, updated_at REAL,
+            UNIQUE(name, scope));
+        INSERT INTO manual(name,keywords,extra,meaning,scope,count,evidence,created_at,updated_at)
+        VALUES('旧词','旧别名','没用了','含义','',1,'[]',1,1);
+        """)
+        conn.commit(); conn.close()
+        store = JargonStore(str(path))
+        try:
+            cols = [r[1] for r in store.conn.execute("PRAGMA table_info(manual)")]
+            self.assertNotIn("extra", cols)
+            row = store.repo("manual").find("旧词", "")
+            self.assertEqual(row["meaning"], "含义")
+            self.assertEqual(row["keywords"], "旧别名")
+            self.assertTrue(list(path.parent.glob("withextra.db.pre-drop-extra.*.bak")))
+        finally:
+            store.close()
+
     def test_reopen_is_idempotent(self):
         self.svc.add_manual("保留", "含义", scope="g1")
         self.store.close()
