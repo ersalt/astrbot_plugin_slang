@@ -26,7 +26,7 @@
 - 学习关思考改为下拉选择：自动 / 不处理 / OpenAI / GLM / Gemini / DeepSeek / 自定义；选自定义才显示 JSON 输入框，支持 OpenAI 兼容、GLM、Gemini 参数，失败自动回退
 - 旧版 `extract_no_think` 布尔开关自动迁移到新下拉
 - 新增 `review_thinking`：自审可独立选择保持思考或关思考，默认保持思考；提取非思考 + 自审思考的混合模式实测 20 条约 67 秒
-- 学习触发增加 `learn_idle_seconds`（默认 120）：距机器人最后一次回复满 120 秒才启动；多群任务单 worker 串行执行
+- 学习触发增加 `learn_idle_seconds`（默认 300，建议 300–600）：距机器人最后一次回复满该秒数才启动；多群任务单 worker 串行执行
 - 新增 `learn_force_multiplier`（默认 2，0 关闭）和 `learn_group_gap_seconds`（默认 5）设置项
 - 插件设置页改为分组布局：基础 / 自动学习 / 注入 / 候选过滤 / 梗百科，梗百科置底
 - 旧版扁平配置自动迁移到分组，兼容已有安装

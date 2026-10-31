@@ -107,7 +107,7 @@ AstrBot 插件设置页按分组显示：
 | `enabled` | true | 总开关：关掉后不学习也不注入 |
 | `auto_learn` | true | 只关学习，注入照常 |
 | `learn_frequency` | 50 | 每个群攒多少条消息触发一次提取（5–10000） |
-| `learn_idle_seconds` | 120 | 距机器人最后一次回复多少秒后才开始学习；0 为不等待 |
+| `learn_idle_seconds` | 300 | 距机器人最后一次回复多少秒后才开始学习；建议 300–600，0 为不等待 |
 | `learn_force_multiplier` | 2 | 缓冲达到阈值几倍时强制学习；0 为不强制 |
 | `learn_group_gap_seconds` | 5 | 一个群学完后间隔多少秒再跑下一个群 |
 | `learn_batch_size` | 15 | 分批学习每批消息数（3–40） |
