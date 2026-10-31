@@ -122,6 +122,9 @@ class Miner:
         self.think_mode = self._resolve_think_mode(config)
         self.extract_extra_body = self._parse_extra_body(
             config.get("extract_extra_body", ""))
+        self.review_mode = self._resolve_review_mode(config)
+        self.review_extra_body = self._parse_extra_body(
+            config.get("review_extra_body", ""))
         self._no_think_blocked: set[str] = set()
         self._thinking_logged: set[str] = set()
 
@@ -132,6 +135,11 @@ class Miner:
             return mode
         # 旧版布尔配置
         return "auto" if bool(config.get("extract_no_think", True)) else "off"
+
+    @staticmethod
+    def _resolve_review_mode(config) -> str:
+        # 默认保持思考，与提取分开配置
+        return str(config.get("review_thinking") or "off").strip().lower()
 
     @staticmethod
     def _parse_extra_body(raw) -> dict:
@@ -372,8 +380,13 @@ class Miner:
 
     async def _review(self, umo: str, items: list[dict]) -> dict[str, tuple[bool, str]]:
         lines = "\n".join(f"- {it['name']}：{it['meaning']}" for it in items)
-        raw = await self._chat(REVIEW_PROMPT.replace("{items}", lines), umo,
-                               self.batch_timeout)
+        old_mode, old_extra = self.think_mode, self.extract_extra_body
+        self.think_mode, self.extract_extra_body = self.review_mode, self.review_extra_body
+        try:
+            raw = await self._chat(REVIEW_PROMPT.replace("{items}", lines), umo,
+                                   self.batch_timeout)
+        finally:
+            self.think_mode, self.extract_extra_body = old_mode, old_extra
         data = parse_json(raw)
         out: dict[str, tuple[bool, str]] = {}
         if isinstance(data, list):

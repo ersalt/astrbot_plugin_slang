@@ -25,6 +25,7 @@
 - 文档补充学习用非思考 provider 的配置方式（LM Studio / OpenAI / DeepSeek / Gemini / GLM）
 - 学习关思考改为下拉选择：自动 / 不处理 / OpenAI / GLM / Gemini / DeepSeek / 自定义；选自定义才显示 JSON 输入框，支持 OpenAI 兼容、GLM、Gemini 参数，失败自动回退
 - 旧版 `extract_no_think` 布尔开关自动迁移到新下拉
+- 新增 `review_thinking`：自审可独立选择保持思考或关思考，默认保持思考；提取非思考 + 自审思考的混合模式实测 20 条约 67 秒
 - 插件设置页改为分组布局：基础 / 自动学习 / 注入 / 候选过滤 / 梗百科，梗百科置底
 - 旧版扁平配置自动迁移到分组，兼容已有安装
 

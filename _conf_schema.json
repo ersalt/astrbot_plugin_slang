@@ -103,6 +103,39 @@
           "extract_thinking": "custom"
         },
         "hint": "仅在「自定义」时显示。示例：{\"reasoning_effort\":\"none\"}、{\"thinking\":{\"type\":\"disabled\"}}、{\"thinking_config\":{\"thinking_budget\":0}}"
+      },
+      "review_thinking": {
+        "description": "自审时如何关闭模型思考",
+        "type": "string",
+        "default": "off",
+        "options": [
+          "auto",
+          "off",
+          "openai",
+          "glm",
+          "gemini",
+          "deepseek",
+          "custom"
+        ],
+        "labels": [
+          "自动识别",
+          "保持思考（推荐）",
+          "OpenAI / LM Studio 关思考",
+          "GLM 关思考",
+          "Gemini 关思考",
+          "DeepSeek 关思考",
+          "自定义"
+        ],
+        "hint": "默认保持思考，只让提取关思考；想自审也提速可改成自动识别或对应后端。"
+      },
+      "review_extra_body": {
+        "description": "自审自定义请求参数（JSON）",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "review_thinking": "custom"
+        },
+        "hint": "仅在自审选「自定义」时显示，格式同提取的自定义 JSON。"
       }
     }
   },
