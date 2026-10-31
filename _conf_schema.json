@@ -1,108 +1,143 @@
 {
-  "enabled": {
-    "description": "总开关",
-    "type": "bool",
-    "default": true
+  "basic": {
+    "description": "基础设置",
+    "type": "object",
+    "hint": "总开关、私聊学习和群黑名单",
+    "items": {
+      "enabled": {
+        "description": "总开关",
+        "type": "bool",
+        "default": true
+      },
+      "listen_private": {
+        "description": "是否也学习私聊",
+        "type": "bool",
+        "default": false
+      },
+      "blacklist_groups": {
+        "description": "不学习的群号，逗号分隔",
+        "type": "string",
+        "default": ""
+      }
+    }
   },
-  "auto_learn": {
-    "description": "是否自动学习群聊黑话（会本地缓存群聊文本片段用于提取，触发时发送给你配置的模型）",
-    "type": "bool",
-    "default": true
+  "learning": {
+    "description": "自动学习",
+    "type": "object",
+    "hint": "控制什么时候学、每批多少条、用哪个模型",
+    "items": {
+      "auto_learn": {
+        "description": "是否自动学习群聊黑话（会本地缓存群聊文本片段用于提取，触发时发送给你配置的模型）",
+        "type": "bool",
+        "default": true
+      },
+      "learn_frequency": {
+        "description": "每个群累计多少条消息触发一次提取",
+        "type": "int",
+        "default": 50,
+        "min": 5,
+        "max": 10000
+      },
+      "learn_batch_size": {
+        "description": "分批学习：每批多少条消息（建议 10-20，太小语境不足）",
+        "type": "int",
+        "default": 15,
+        "min": 3,
+        "max": 40
+      },
+      "learn_batch_delay_ms": {
+        "description": "分批学习：批间等待毫秒，给前台聊天让路",
+        "type": "int",
+        "default": 600,
+        "min": 0,
+        "max": 5000
+      },
+      "learn_batch_timeout": {
+        "description": "分批学习：单批超时秒数，超时跳过该批",
+        "type": "int",
+        "default": 300,
+        "min": 120,
+        "max": 600
+      },
+      "extract_max": {
+        "description": "单次提取的最大条数",
+        "type": "int",
+        "default": 5,
+        "min": 1,
+        "max": 100
+      },
+      "provider_id": {
+        "description": "提取用的模型 ID，留空用当前会话模型",
+        "type": "string",
+        "default": ""
+      },
+      "extract_no_think": {
+        "description": "学习/自审时尝试关闭模型思考（reasoning_effort=none）；不支持会自动回退，不影响聊天",
+        "type": "bool",
+        "default": true
+      }
+    }
   },
-  "learn_frequency": {
-    "description": "每个群累计多少条消息触发一次提取",
-    "type": "int",
-    "default": 50,
-    "min": 5,
-    "max": 10000
+  "inject": {
+    "description": "注入设置",
+    "type": "object",
+    "hint": "控制每轮注入多少条、单条含义多长",
+    "items": {
+      "inject_max": {
+        "description": "单次注入的最大条数",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 50
+      },
+      "max_meaning_chars": {
+        "description": "单条含义的字数上限，超出截断",
+        "type": "int",
+        "default": 200,
+        "min": 20,
+        "max": 1000
+      }
+    }
   },
-  "learn_batch_size": {
-    "description": "分批学习：每批多少条消息（建议 10-20，太小语境不足）",
-    "type": "int",
-    "default": 15,
-    "min": 3,
-    "max": 40
+  "review": {
+    "description": "候选过滤",
+    "type": "object",
+    "hint": "命中拒绝词的候选不会进入自审",
+    "items": {
+      "reject_words": {
+        "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
+        "type": "string",
+        "default": ""
+      }
+    }
   },
-  "learn_batch_delay_ms": {
-    "description": "分批学习：批间等待毫秒，给前台聊天让路",
-    "type": "int",
-    "default": 600,
-    "min": 0,
-    "max": 5000
-  },
-  "learn_batch_timeout": {
-    "description": "分批学习：单批超时秒数，超时跳过该批",
-    "type": "int",
-    "default": 300,
-    "min": 120,
-    "max": 600
-  },
-  "extract_max": {
-    "description": "单次提取的最大条数",
-    "type": "int",
-    "default": 5,
-    "min": 1,
-    "max": 100
-  },
-  "inject_max": {
-    "description": "单次注入的最大条数",
-    "type": "int",
-    "default": 3,
-    "min": 1,
-    "max": 50
-  },
-  "max_meaning_chars": {
-    "description": "单条含义的字数上限，超出截断",
-    "type": "int",
-    "default": 200,
-    "min": 20,
-    "max": 1000
-  },
-  "provider_id": {
-    "description": "提取用的模型 ID，留空用当前会话模型",
-    "type": "string",
-    "default": ""
-  },
-  "listen_private": {
-    "description": "是否也学习私聊",
-    "type": "bool",
-    "default": false
-  },
-  "blacklist_groups": {
-    "description": "不学习的群号，逗号分隔",
-    "type": "string",
-    "default": ""
-  },
-  "wiki_enable": {
-    "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
-    "type": "bool",
-    "default": true
-  },
-  "wiki_sync_enable": {
-    "description": "自动同步梗Wiki（公开 API）",
-    "type": "bool",
-    "default": false
-  },
-  "wiki_sync_interval_days": {
-    "description": "梗库自动同步间隔（天）",
-    "type": "int",
-    "default": 7,
-    "min": 1,
-    "max": 365
-  },
-  "wiki_sync_time": {
-    "description": "每天几点几分检查同步，HH:MM",
-    "type": "string",
-    "default": "04:30"
-  },
-  "reject_words": {
-    "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
-    "type": "string",
-    "default": ""
-  },
-  "extract_no_think": {
-    "description": "学习/自审时尝试关闭模型思考（reasoning_effort=none）；不支持会自动回退，不影响聊天",
-    "type": "bool",
-    "default": true
+  "wiki": {
+    "description": "梗百科",
+    "type": "object",
+    "hint": "梗库同步与侧栏显示；不需要可以关闭",
+    "items": {
+      "wiki_enable": {
+        "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
+        "type": "bool",
+        "default": true
+      },
+      "wiki_sync_enable": {
+        "description": "自动同步梗Wiki（公开 API）",
+        "type": "bool",
+        "default": false
+      },
+      "wiki_sync_interval_days": {
+        "description": "梗库自动同步间隔（天）",
+        "type": "int",
+        "default": 7,
+        "min": 1,
+        "max": 365
+      },
+      "wiki_sync_time": {
+        "description": "每天几点几分检查同步，HH:MM",
+        "type": "string",
+        "default": "04:30"
+      }
+    }
   }
 }

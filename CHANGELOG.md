@@ -24,6 +24,8 @@
 - 学习缓冲清洗图片/表情/语音等占位，图片消息不会进入提取；启动时清理历史缓冲
 - 文档补充学习用非思考 provider 的配置方式（LM Studio / OpenAI / DeepSeek / Gemini / GLM）
 - 新增 `extract_no_think`：学习时内部复制 provider 并尝试 `reasoning_effort=none`，不支持自动回退；无需新建重复提供商
+- 插件设置页改为分组布局：基础 / 自动学习 / 注入 / 候选过滤 / 梗百科，梗百科置底
+- 旧版扁平配置自动迁移到分组，兼容已有安装
 
 ## v1.4.10
 
