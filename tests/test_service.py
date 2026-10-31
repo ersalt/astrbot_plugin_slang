@@ -85,6 +85,13 @@ class TestManualCrud(Base):
         hits = self.svc.match("现在是梁文峰还是梁文谷", "", 3)
         self.assertEqual(hits[0]["name"], "梁文锋")
 
+    def test_lookup_finds_both_sources(self):
+        self.svc.add_manual("同名", "手动含义", scope="g1")
+        self.svc.submit("同名", "自动含义", scope="g1", approved=True)
+        rows = self.svc.lookup("同名", "g1")
+        tables = {r["table"] for r in rows}
+        self.assertEqual(tables, {"manual", "auto"})
+
     def test_manual_and_auto_coexist(self):
         self.svc.submit("共存", "自动含义", scope="g1", approved=True)
         self.svc.add_manual("共存", "手动含义", scope="g1")

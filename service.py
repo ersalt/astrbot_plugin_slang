@@ -280,6 +280,15 @@ class SlangService:
             return total, rows[(page - 1) * size: page * size]
         return 0, []
 
+    def lookup(self, name: str, scope: str = "") -> list[dict]:
+        """按自然键查四张表，用于录入前预检。"""
+        out = []
+        for t in TABLES:
+            rec = self.store.repo(t).find(name, scope)
+            if rec:
+                out.append(public(rec, t))
+        return out
+
     def pending_scopes(self) -> list[dict]:
         merged: dict[str, int] = {}
         for t in PENDING:

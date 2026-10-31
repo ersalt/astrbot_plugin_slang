@@ -329,6 +329,7 @@ class JargonLite(Star):
             ("ping", self.api_ping, ["GET", "POST"], "连通性自检"),
             ("groups", self.api_groups, ["GET", "POST"], "群列表"),
             ("tree", self.api_tree, ["GET", "POST"], "侧栏树"),
+            ("lookup", self.api_lookup, ["GET", "POST"], "录入前查重"),
             ("add", self.api_add, ["POST"], "手动录入"),
             ("update", self.api_update, ["POST"], "改词条"),
             ("delete", self.api_delete, ["POST"], "删除"),
@@ -494,6 +495,17 @@ class JargonLite(Star):
         return {"status": "ok", "message": "", "data": {
             "enabled": self.enabled, "stats": self._stats_web(),
             "total": total, "page": page, "size": size, "items": items}}
+
+    async def api_lookup(self):
+        p = await self._payload()
+        name = str(p.get("name") or p.get("content") or "").strip()[:32]
+        scope = str(p.get("scope") or "").strip()
+        if scope == "__global__":
+            scope = ""
+        if not name:
+            return {"status": "error", "message": "词条名不能为空", "data": {}}
+        return {"status": "ok", "message": "", "data": {
+            "items": self.svc.lookup(name, scope)}}
 
     async def api_add(self):
         p = await self._payload()

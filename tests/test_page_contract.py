@@ -35,6 +35,10 @@ class TestPageContract(unittest.TestCase):
         self.assertIn("keywords:", self.html)
         self.assertIn("extra:", self.html)
 
+    def test_add_preflight_lookup(self):
+        self.assertIn('"yh/lookup"', self.html)
+        self.assertIn("showConfirm", self.html)
+
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 

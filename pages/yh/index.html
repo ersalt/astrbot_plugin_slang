@@ -221,7 +221,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   <div class="card modal" style="width:min(420px,100%)">
     <h3 id="alertTitle">提示</h3>
     <div id="alertBody" style="font-size:13px;line-height:1.7;white-space:pre-wrap;color:#3a3b40"></div>
-    <div class="modal-foot"><button class="primary" id="alertOk">知道了</button></div>
+    <div class="modal-foot"><button class="link" id="alertCancel" style="display:none">取消</button><button class="primary" id="alertOk">知道了</button></div>
   </div>
 </div>
 
@@ -235,12 +235,30 @@ const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: 
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
   selected: new Set() };
 
+let alertOkHandler = null;
 function showAlert(msg, title = "提示"){
   $("alertTitle").textContent = title;
   $("alertBody").textContent = msg || "服务器没有返回内容";
+  $("alertOk").textContent = "知道了";
+  $("alertCancel").style.display = "none";
+  alertOkHandler = null;
   $("alertMask").classList.add("on");
 }
-$("alertOk").onclick = () => $("alertMask").classList.remove("on");
+function showConfirm(msg, title, onOk){
+  showAlert(msg, title);
+  $("alertOk").textContent = "仍要新建";
+  $("alertCancel").style.display = "";
+  alertOkHandler = onOk;
+}
+$("alertOk").onclick = () => {
+  $("alertMask").classList.remove("on");
+  const fn = alertOkHandler; alertOkHandler = null;
+  if (fn) fn();
+};
+$("alertCancel").onclick = () => {
+  $("alertMask").classList.remove("on");
+  alertOkHandler = null;
+};
 
 function callApi(ep, payload, ms = 10000){
   return Promise.race([
@@ -579,11 +597,10 @@ $("addBtn").onclick = async () => {
   $("addName").focus();
 };
 $("addCancel").onclick = () => $("addMask").classList.remove("on");
-$("addSave").onclick = async () => {
+async function doAdd(){
   const name = $("addName").value.trim();
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
-  if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
   let r;
   try {
     r = await callApi("yh/add", { content: name, meaning, scope,
@@ -594,6 +611,34 @@ $("addSave").onclick = async () => {
   }
   showResult(r, "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
+}
+
+$("addSave").onclick = async () => {
+  const name = $("addName").value.trim();
+  const meaning = $("addMeaning").value.trim();
+  const scope = $("addScope").value;
+  if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
+  let pre;
+  try {
+    pre = await callApi("yh/lookup", { name, scope });
+  } catch (e) {
+    showAlert("请求失败：" + ((e && e.message) || e), "查重失败");
+    return;
+  }
+  const items = (pre && pre.data && pre.data.items) || [];
+  const manualDup = items.find(x => x.table === "manual" || x.table === "manual_pending");
+  if (manualDup){
+    showAlert(`「${name}」已存在于${manualDup.table === "manual" ? "手动" : "手动待审"}：`+
+      `${(manualDup.meaning || "").slice(0, 40)}…\n未覆盖。要改内容请用「修改」。`, "已存在");
+    return;
+  }
+  const autoDup = items.find(x => x.table === "auto" || x.table === "auto_pending");
+  if (autoDup){
+    showConfirm(`黑话库已有同名条目「${name}」：\n${(autoDup.meaning || "").slice(0, 60)}…\n\n`+
+      `继续会新建一条手动条目，不会覆盖黑话库那条。`, "要新建吗？", doAdd);
+    return;
+  }
+  doAdd();
 };
 
 /* ---------- 设置 ---------- */
