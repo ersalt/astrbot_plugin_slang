@@ -141,6 +141,8 @@ class JargonLite(Star):
         self.auto_learn = bool(self.cfg.get("auto_learn", True))
         self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
         self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 120)))
+        self.learn_force_multiplier = max(0, int(self.cfg.get("learn_force_multiplier", 2)))
+        self.learn_group_gap_seconds = max(0, int(self.cfg.get("learn_group_gap_seconds", 5)))
         self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
         self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
         self.wiki_enable = bool(self.cfg.get("wiki_enable", True))
@@ -354,8 +356,11 @@ class JargonLite(Star):
                         self._learn_pending.pop(umo, None)
                         continue
                     idle = now - self._last_reply_at.get(umo, 0)
-                    # 距离机器人最后一次回复满 N 秒；缓冲达到 2 倍阈值强制启动
-                    if idle < self.learn_idle_seconds and count < self.learn_frequency * 2:
+                    # 距离机器人最后一次回复满 N 秒；缓冲达到配置倍数时强制启动
+                    force_count = self.learn_frequency * self.learn_force_multiplier
+                    forced = (self.learn_force_multiplier > 0
+                              and count >= force_count)
+                    if idle < self.learn_idle_seconds and not forced:
                         continue
                     ready.append((self._last_reply_at.get(umo, 0), umo, scope))
                 if not ready:
@@ -373,12 +378,12 @@ class JargonLite(Star):
                     self._learning.discard(umo)
                 if self.store.buffer_count(umo) >= self.learn_frequency:
                     self._learn_pending[umo] = scope
-                await asyncio.sleep(5)
+                await asyncio.sleep(self.learn_group_gap_seconds)
             except asyncio.CancelledError:
                 return
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"[slang] 学习调度异常: {exc}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(max(5, self.learn_group_gap_seconds))
 
     async def _learn(self, umo: str, scope: str, messages: list[dict]):
         lock = self._locks.setdefault(umo, asyncio.Lock())
@@ -820,6 +825,8 @@ class JargonLite(Star):
         self.auto_learn = bool(self.cfg.get("auto_learn", True))
         self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
         self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 120)))
+        self.learn_force_multiplier = max(0, int(self.cfg.get("learn_force_multiplier", 2)))
+        self.learn_group_gap_seconds = max(0, int(self.cfg.get("learn_group_gap_seconds", 5)))
         self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
         self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
         self.wiki_enable = bool(self.cfg.get("wiki_enable", True))

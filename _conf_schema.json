@@ -44,7 +44,23 @@
         "default": 120,
         "min": 0,
         "max": 1800,
-        "hint": "0 表示不等待；默认 120 秒。缓冲达到 2 倍阈值时会强制开始，避免活跃群一直学不了。"
+        "hint": "0 表示不等待；默认 120 秒。缓冲达到「防饿死倍数」时会强制开始，避免活跃群一直学不了。"
+      },
+      "learn_force_multiplier": {
+        "description": "防饿死倍数（缓冲达到阈值几倍时强制学习）",
+        "type": "int",
+        "default": 2,
+        "min": 0,
+        "max": 10,
+        "hint": "0 表示不强制，永远等满空闲秒数；默认 2 即缓冲达到 2 × learn_frequency 时强制启动。"
+      },
+      "learn_group_gap_seconds": {
+        "description": "一个群学完后，间隔多少秒再跑下一个群",
+        "type": "int",
+        "default": 5,
+        "min": 0,
+        "max": 300,
+        "hint": "多个群同时待学时由单 worker 串行执行；默认 5 秒，避免连续请求挤在一起。"
       },
       "learn_batch_size": {
         "description": "分批学习：每批多少条消息（建议 10-20，太小语境不足）",
