@@ -192,7 +192,10 @@ button.primary:hover{background:#1d4ed8}
 .set-group .set-row{grid-column:1/-1;padding:2px 0;font-size:12.5px}
 .set-group .field.wide{grid-column:1/-1}
 .set-group .field small{line-height:1.45}
-.set-row input[type=checkbox]{width:15px;height:15px;min-height:0;accent-color:var(--accent)}
+input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0;accent-color:var(--accent)}
+.entry .pick[type=checkbox]{width:18px;height:18px;min-height:18px;padding:0;margin:0;
+  border-radius:3px;flex:0 0 18px;justify-self:center}
+.set-row input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0}
 @media (max-width:640px){
   .settings-modal{max-height:92vh}
   .set-group{grid-template-columns:1fr}
@@ -351,6 +354,11 @@ function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
+function fmtDate(ts){
+  const d = new Date(Number(ts) * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function normalize(raw){
   if (raw && typeof raw === "object" && "status" in raw) return raw;
   return { status: "ok", message: "", data: raw || {} };
@@ -448,7 +456,7 @@ function entryHTML(it){
   const note = it.auto_note ? `理由：${esc(it.auto_note)}` : "";
   const who = it.contributor ? `来源：${esc(it.contributor)}` : "";
   const meta = [src, scope, who, `×${it.count}`,
-    it.updated_at ? new Date(it.updated_at * 1000).toLocaleString("zh-CN",{hour12:false}).slice(5,16) : "",
+    it.updated_at ? fmtDate(it.updated_at) : "",
     note].filter(Boolean).join(" · ");
   const pick = it.pending
     ? `<input type="checkbox" class="pick" data-id="${it.id}" ${state.selected.has(String(it.id)) ? "checked" : ""} />`
