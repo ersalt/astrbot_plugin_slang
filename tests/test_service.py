@@ -19,7 +19,7 @@ from index import KeywordIndex  # noqa: E402
 from service import SlangError, SlangService  # noqa: E402
 
 try:
-    from miner import Miner  # noqa: E402
+    from miner import Miner, is_low_value  # noqa: E402
 except ModuleNotFoundError:  # 测试环境没装 AstrBot，给 miner 一个 logger 桩
     import types
     _astrbot = types.ModuleType("astrbot")
@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # 测试环境没装 AstrBot，给 miner 一个 log
         error=lambda *a, **k: None, debug=lambda *a, **k: None)
     sys.modules["astrbot"] = _astrbot
     sys.modules["astrbot.api"] = _api
-    from miner import Miner  # noqa: E402
+    from miner import Miner, is_low_value  # noqa: E402
 from store import JargonStore  # noqa: E402
 
 
@@ -301,6 +301,17 @@ class TestMigration(Base):
             self.assertEqual(store2.meta_get("schema_version"), "5")
         finally:
             store2.close()
+
+
+class TestLowValue(unittest.TestCase):
+    def test_literal_ids_filtered(self):
+        self.assertTrue(is_low_value("魔女小姐小白", "群友 魔女小姐小白 的 ID"))
+        self.assertTrue(is_low_value("日生门人", "群友日生门人的ID"))
+        self.assertTrue(is_low_value("某甲", "某甲的账号"))
+
+    def test_nickname_alias_kept(self):
+        self.assertFalse(is_low_value("哥布林", "群友 寰宇原神大王 的别称"))
+        self.assertFalse(is_low_value("大肥鱼", "群内对某位群友的戏称"))
 
 
 class TestBuffer(unittest.IsolatedAsyncioTestCase):
