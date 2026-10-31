@@ -3,6 +3,7 @@
 """提取 + 自审。LLM 调用通过 AstrBot provider，解析逻辑纯本地。"""
 
 import asyncio
+import copy
 import json
 import re
 
@@ -117,6 +118,9 @@ class Miner:
         self.batch_delay_ms = max(0, int(config.get("learn_batch_delay_ms", 600) or 600))
         # 思考模型单批 15 条经常超过 2 分钟；低于 300 秒一律抬到 300
         self.batch_timeout = max(300, int(config.get("learn_batch_timeout", 300) or 300))
+        # 学习时尝试关思考；provider 不支持时自动回退，不影响聊天
+        self.no_think = bool(config.get("extract_no_think", True))
+        self._no_think_blocked: set[str] = set()
 
 
     def _provider(self, umo):
@@ -141,17 +145,55 @@ class Miner:
         except Exception:  # noqa: BLE001
             return None
 
+    @staticmethod
+    def _provider_key(provider) -> str:
+        cfg = getattr(provider, "provider_config", {}) or {}
+        return str(cfg.get("id") or id(provider))
+
+    def _no_think_provider(self, provider):
+        """复制 provider，只改 custom_extra_body；不改全局配置、不建新提供商。"""
+        if not self.no_think:
+            return provider
+        key = self._provider_key(provider)
+        if key in self._no_think_blocked:
+            return provider
+        try:
+            cfg = dict(getattr(provider, "provider_config", {}) or {})
+            extra = dict(cfg.get("custom_extra_body") or {})
+            if extra.get("reasoning_effort"):
+                return provider
+            extra["reasoning_effort"] = "none"
+            cfg["custom_extra_body"] = extra
+            clone = copy.copy(provider)
+            clone.provider_config = cfg
+            return clone
+        except Exception:  # noqa: BLE001
+            return provider
+
+    async def _call_provider(self, provider, prompt, timeout):
+        coro = provider.text_chat(prompt=prompt)
+        if timeout:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        return await coro
+
     async def _chat(self, prompt: str, umo: str, timeout: int | None = None) -> str:
         provider = self._provider(umo)
         if not provider:
             logger.warning("[slang] 没有可用模型，跳过")
             return ""
         try:
-            coro = provider.text_chat(prompt=prompt)
-            if timeout:
-                resp = await asyncio.wait_for(coro, timeout=timeout)
-            else:
-                resp = await coro
+            use = self._no_think_provider(provider)
+            try:
+                resp = await self._call_provider(use, prompt, timeout)
+            except asyncio.TimeoutError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if use is provider:
+                    raise
+                self._no_think_blocked.add(self._provider_key(provider))
+                logger.info(
+                    f"[slang] 该模型不支持关思考，回退普通请求：{exc}")
+                resp = await self._call_provider(provider, prompt, timeout)
             return (resp.completion_text or "").strip()
         except asyncio.TimeoutError:
             logger.warning(f"[slang] 模型调用超时（{timeout}s），本批跳过")

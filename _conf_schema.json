@@ -99,5 +99,10 @@
     "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
     "type": "string",
     "default": ""
+  },
+  "extract_no_think": {
+    "description": "学习/自审时尝试关闭模型思考（reasoning_effort=none）；不支持会自动回退，不影响聊天",
+    "type": "bool",
+    "default": true
   }
 }

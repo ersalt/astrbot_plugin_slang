@@ -67,13 +67,12 @@
 | Gemini | 用 `gemini-2.0-flash` 等非思考模型；AstrBot 的 Gemini provider 不接受 `thinking_budget` |
 | GLM | 用 `glm-4-flash` / `glm-4-air` 等非思考模型 |
 
-步骤：
+插件默认开启 `extract_no_think`：学习时复制当前 provider，只把 `reasoning_effort: "none"` 塞进这次请求，**不需要在后台新建重复模型**。
 
-1. 在 AstrBot 里复制一份 provider，模型选非思考版，或设置 `custom_extra_body`
-2. 插件设置 `provider_id` 指向这个 provider
-3. 聊天 provider 保持不变
-
-注意：AstrBot 的 `text_chat()` 不支持单次请求传 `reasoning_effort`，所以只能通过独立 provider 或非思考模型实现。
+- 支持该参数的 provider（LM Studio / 部分 OpenAI 兼容服务）：学习不思考
+- 不支持或报错：自动回退普通请求，聊天不受影响
+- 想完全不尝试：关闭 `extract_no_think`
+- 想用另一个模型提取：设置 `provider_id`，它优先级更高
 
 ## 配置
 

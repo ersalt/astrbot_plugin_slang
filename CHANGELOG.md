@@ -23,6 +23,7 @@
 - 自动过滤「群友 XXX 的 ID」这类同义反复词条，保留「XX 的别称」（内置规则，无开关）
 - 学习缓冲清洗图片/表情/语音等占位，图片消息不会进入提取；启动时清理历史缓冲
 - 文档补充学习用非思考 provider 的配置方式（LM Studio / OpenAI / DeepSeek / Gemini / GLM）
+- 新增 `extract_no_think`：学习时内部复制 provider 并尝试 `reasoning_effort=none`，不支持自动回退；无需新建重复提供商
 
 ## v1.4.10
 
