@@ -664,29 +664,19 @@ let cfgFields = [], cfgValues = {};
 function renderSettings(d){
   cfgFields = d.fields || [];
   cfgValues = d.values || {};
-  const groups = [
-    { title: "基础", keys: ["enabled", "auto_learn", "listen_private", "blacklist_groups"] },
-    { title: "学习与注入", keys: ["learn_frequency", "learn_batch_size",
-        "learn_batch_delay_ms", "learn_batch_timeout", "extract_max", "inject_max",
-        "max_meaning_chars", "provider_id", "reject_words"] },
-    { title: "梗百科", keys: ["wiki_enable", "wiki_sync_enable",
-        "wiki_sync_interval_days", "wiki_sync_time"] },
-  ];
-  const byKey = Object.fromEntries(cfgFields.map(f => [f.key, f]));
-  const used = new Set();
+  const groups = [];
+  for (const f of cfgFields){
+    let g = groups.find(x => x.key === f.group);
+    if (!g){
+      g = {key: f.group || "other", label: f.group_label || f.group || "其他", fields: []};
+      groups.push(g);
+    }
+    g.fields.push(f);
+  }
   let html = "";
   for (const g of groups){
-    const fs = g.keys.map(k => byKey[k]).filter(Boolean);
-    if (!fs.length) continue;
-    fs.forEach(f => used.add(f.key));
-    html += `<div class="set-group"><div class="set-title">${g.title}</div>`;
-    html += fs.map(f => fieldHTML(f, cfgValues[f.key])).join("");
-    html += `</div>`;
-  }
-  const rest = cfgFields.filter(f => !used.has(f.key));
-  if (rest.length){
-    html += `<div class="set-group"><div class="set-title">其他</div>`;
-    html += rest.map(f => fieldHTML(f, cfgValues[f.key])).join("");
+    html += `<div class="set-group"><div class="set-title">${esc(g.label)}</div>`;
+    html += g.fields.map(f => fieldHTML(f, cfgValues[f.key])).join("");
     html += `</div>`;
   }
   $("setBody").innerHTML = html;
@@ -699,40 +689,74 @@ function renderSettings(d){
       (d.providers || []).map(p => `<option value="${esc(p.id)}">${esc(p.id)}${p.model ? " · " + esc(p.model) : ""}</option>`).join("");
     sel.value = cur;
   }
-  // 关闭梗百科时收起下面几项
+
+  // 条件字段 + 梗百科依赖
   const wikiOn = $("setBody").querySelector('[data-key="wiki_enable"]');
-  if (wikiOn){
-    const sync = () => {
-      $("setBody").querySelectorAll(".wiki-dep").forEach(el => {
-        el.style.display = wikiOn.checked ? "" : "none";
-      });
-    };
-    wikiOn.onchange = sync; sync();
-  }
+  const syncWiki = () => {
+    if (!wikiOn) return;
+    $("setBody").querySelectorAll(".wiki-dep").forEach(el => {
+      el.style.display = wikiOn.checked ? "" : "none";
+    });
+  };
+  $("setBody").querySelectorAll("[data-key]").forEach(el => {
+    el.addEventListener("change", () => { syncConditions(); syncWiki(); });
+    el.addEventListener("input", () => { syncConditions(); syncWiki(); });
+  });
+  if (wikiOn) wikiOn.addEventListener("change", syncWiki);
+  syncConditions();
+  syncWiki();
+
   const last = d.wiki_synced_at ? new Date(Number(d.wiki_synced_at) * 1000)
     .toLocaleString("zh-CN", {hour12: false}) : "从未";
   $("wikiMeta").textContent = `梗库 ${d.wiki_count ?? 0} 条 · 上次同步 ${last}`;
 }
 
+function syncConditions(){
+  const body = $("setBody");
+  body.querySelectorAll("[data-condition]").forEach(el => {
+    let cond = {};
+    try { cond = JSON.parse(el.dataset.condition || "{}"); } catch (e) { cond = {}; }
+    let show = true;
+    for (const [key, want] of Object.entries(cond)){
+      const target = body.querySelector(`[data-key="${key}"]`);
+      if (!target) continue;
+      const val = target.type === "checkbox" ? target.checked : target.value;
+      if (String(val) !== String(want)){ show = false; break; }
+    }
+    el.style.display = show ? "" : "none";
+  });
+}
+
 function fieldHTML(f, value){
   const dep = f.key.startsWith("wiki_") && f.key !== "wiki_enable" ? "wiki-dep" : "";
+  const cond = f.condition ? ` data-condition="${esc(JSON.stringify(f.condition))}"` : "";
+  const hint = f.hint ? `<small style="color:var(--muted);font-size:11px">${esc(f.hint)}</small>` : "";
   if (f.type === "bool"){
-    return `<label class="set-row ${dep}">
+    return `<label class="set-row ${dep}"${cond}>
       <input type="checkbox" data-key="${f.key}" ${value ? "checked" : ""} />
       <span>${esc(f.label)}</span></label>`;
   }
   if (f.key === "provider_id"){
-    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-      <select data-key="provider_id"></select></div>`;
+    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+      <select data-key="provider_id"></select>${hint}</div>`;
+  }
+  if (Array.isArray(f.options) && f.options.length){
+    const cur = String(value ?? f.default ?? "");
+    const labels = f.labels || [];
+    const opts = f.options.map((opt, i) =>
+      `<option value="${esc(opt)}" ${String(opt) === cur ? "selected" : ""}>${esc(labels[i] || opt)}</option>`
+    ).join("");
+    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+      <select data-key="${f.key}">${opts}</select>${hint}</div>`;
   }
   if (f.type === "int"){
     const min = f.min != null ? `min="${f.min}"` : "";
     const max = f.max != null ? `max="${f.max}"` : "";
-    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-      <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" /></div>`;
+    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+      <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" />${hint}</div>`;
   }
-  return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-    <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" /></div>`;
+  return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+    <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" />${hint}</div>`;
 }
 
 $("settingsBtn").onclick = async () => {

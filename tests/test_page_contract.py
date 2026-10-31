@@ -46,6 +46,11 @@ class TestPageContract(unittest.TestCase):
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 
+    def test_settings_groups_and_selects(self):
+        self.assertIn("f.group_label", self.html)
+        self.assertIn("Array.isArray(f.options)", self.html)
+        self.assertIn("data-condition", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

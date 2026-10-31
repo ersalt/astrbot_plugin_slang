@@ -809,12 +809,19 @@ class JargonLite(Star):
                 if typ == "object" and isinstance(spec.get("items"), dict):
                     walk(spec["items"], path)
                     continue
+                group_key = prefix[0] if prefix else ""
+                group_spec = raw.get(group_key) if group_key else {}
                 fields.append({
                     "key": key, "path": list(path),
-                    "group": spec.get("group") or (prefix[0] if prefix else ""),
+                    "group": spec.get("group") or group_key,
+                    "group_label": (group_spec or {}).get("description") or group_key,
                     "label": spec.get("description", key),
                     "type": typ, "default": spec.get("default"),
                     "min": spec.get("min"), "max": spec.get("max"),
+                    "options": spec.get("options"),
+                    "labels": spec.get("labels"),
+                    "condition": spec.get("condition"),
+                    "hint": spec.get("hint"),
                 })
 
         walk(raw)
