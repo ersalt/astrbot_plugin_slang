@@ -12,6 +12,7 @@
 """
 
 import json
+import re
 import shutil
 import sqlite3
 import threading
@@ -45,6 +46,16 @@ CREATE INDEX IF NOT EXISTS idx_{t}_name ON {t}(name COLLATE NOCASE);
 """
 
 MAX_EVIDENCE = 3
+_MEDIA_MARK_RE = re.compile(
+    r"\[(?:图片|Image|image|图片消息|表情|动画表情|语音|视频|文件|File|Record|Video)\]",
+    re.I,
+)
+
+
+def clean_learning_text(text: str) -> str:
+    """去掉图片/表情/语音等占位，避免非文本内容进入学习。"""
+    text = _MEDIA_MARK_RE.sub(" ", text or "")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 class Repo:
@@ -168,6 +179,7 @@ class JargonStore:
         with self._lock:
             self._init_schema()
             self._migrate_legacy()
+            self._clean_buffer_media()
             if self.meta_get("schema_version") != "5":
                 self.meta_set("schema_version", "5")
             self.conn.execute("DELETE FROM buffer WHERE ts < ?",
@@ -329,13 +341,29 @@ class JargonStore:
             items.append(new)
         return json.dumps(items[-MAX_EVIDENCE:], ensure_ascii=False)
 
+    def _clean_buffer_media(self):
+        """启动时清洗历史缓冲里的图片/表情占位。"""
+        rows = self.conn.execute("SELECT id, text FROM buffer").fetchall()
+        for r in rows:
+            new = clean_learning_text(r["text"])
+            if not new:
+                self.conn.execute("DELETE FROM buffer WHERE id = ?", (r["id"],))
+            elif new != r["text"]:
+                self.conn.execute(
+                    "UPDATE buffer SET text = ? WHERE id = ?", (new, r["id"]))
+        self.conn.commit()
+
     # ---------- 缓冲（学习用） ----------
 
     def buffer_add(self, umo: str, sender: str, text: str) -> int:
+        text = clean_learning_text(text)[:500]
         with self._lock:
+            if not text:
+                return self.conn.execute(
+                    "SELECT COUNT(*) FROM buffer WHERE umo = ?", (umo,)).fetchone()[0]
             self.conn.execute(
                 "INSERT INTO buffer(umo, sender, text, ts) VALUES(?,?,?,?)",
-                (umo, sender, text[:500], time.time()))
+                (umo, sender, text, time.time()))
             self.conn.execute(
                 "DELETE FROM buffer WHERE id <= (SELECT MAX(id) - 20000 FROM buffer)")
             self.conn.commit()

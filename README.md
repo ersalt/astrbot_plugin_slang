@@ -53,6 +53,28 @@
 | `/yh stat` | 统计 |
 | `/yh check 一句话` | 预览这句话会注入什么 |
 
+## 学习用非思考模型
+
+插件不绑定具体厂商，学习/自审走 `provider_id` 指定的 provider；聊天仍用当前会话 provider。
+
+想降低学习延迟，给提取单独配一个**非思考模型**，或在 provider 的 `custom_extra_body` 里关掉思考：
+
+| 厂商 | 做法 |
+| --- | --- |
+| LM Studio / OpenAI 兼容 | `custom_extra_body: {"reasoning_effort": "none"}`（实测有效） |
+| OpenAI | 提取用 `gpt-4.1-mini` / `gpt-4o-mini` 这类非推理模型，或用 `reasoning_effort: "minimal"` |
+| DeepSeek | 提取用 `deepseek-chat`，不要用 `deepseek-reasoner` |
+| Gemini | 用 `gemini-2.0-flash` 等非思考模型；AstrBot 的 Gemini provider 不接受 `thinking_budget` |
+| GLM | 用 `glm-4-flash` / `glm-4-air` 等非思考模型 |
+
+步骤：
+
+1. 在 AstrBot 里复制一份 provider，模型选非思考版，或设置 `custom_extra_body`
+2. 插件设置 `provider_id` 指向这个 provider
+3. 聊天 provider 保持不变
+
+注意：AstrBot 的 `text_chat()` 不支持单次请求传 `reasoning_effort`，所以只能通过独立 provider 或非思考模型实现。
+
 ## 配置
 
 后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 17 项。

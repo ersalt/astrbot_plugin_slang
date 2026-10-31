@@ -30,7 +30,7 @@ except ModuleNotFoundError:  # 测试环境没装 AstrBot，给 miner 一个 log
     sys.modules["astrbot"] = _astrbot
     sys.modules["astrbot.api"] = _api
     from miner import Miner, is_low_value  # noqa: E402
-from store import JargonStore  # noqa: E402
+from store import JargonStore, clean_learning_text  # noqa: E402
 
 
 class Base(unittest.TestCase):
@@ -320,6 +320,16 @@ class TestBuffer(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.store.close()
         self.tmp.cleanup()
+
+    async def test_media_markers_removed(self):
+        self.assertEqual(clean_learning_text("看图 [图片] 好笑"), "看图 好笑")
+        self.assertEqual(clean_learning_text("[图片]"), "")
+        before = len(self.store.buffer_take("u", 10))
+        self.store.buffer_add("u", "A", "看图 [图片]")
+        self.store.buffer_add("u", "A", "[图片]")
+        rows = self.store.buffer_take("u", 10)
+        self.assertEqual(len(rows), before + 1)
+        self.assertEqual(rows[-1]["text"], "看图")
 
     async def test_take_and_delete_keep_new_messages(self):
         for i in range(3):
