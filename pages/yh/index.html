@@ -139,6 +139,66 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   .main-head{flex-wrap:wrap}
   .search{width:100%}
 }
+
+/* ---------- 设置页视觉刷新（参考 agent-html 的中性色/高密度，不复制其代码） ---------- */
+:root{
+  --bg:#f6f6f7; --card:#fff; --bubble:#fafafa; --text:#18181b; --muted:#71717a;
+  --line:#e4e4e7; --line-strong:#d4d4d8; --accent:#2563eb; --accent-soft:#eff6ff;
+  --radius:10px;
+}
+body{background:var(--bg)}
+.card{border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(24,24,27,.04)}
+.side{top:18px}
+.nav{border:1px solid transparent;background:transparent;border-radius:8px;margin-bottom:8px}
+.nav:hover{background:#f4f4f5;border-color:var(--line)}
+.nav.active{background:var(--accent-soft);border-color:#dbeafe;color:#1d4ed8}
+.nav .count,.sub .count{background:#f4f4f5;border:1px solid var(--line);font-weight:600}
+.entry{background:#fafafa;border:1px solid var(--line);border-radius:10px}
+.entry:hover{border-color:var(--line-strong)}
+.btn{border-radius:8px;background:#fff}
+.btn:hover{background:#fafafa;border-color:var(--line-strong)}
+input,select,textarea{border-radius:8px;border-color:var(--line);background:#fff;
+  min-height:34px;padding:7px 10px}
+input:focus,textarea:focus,select:focus{outline:2px solid #bfdbfe;outline-offset:-1px;border-color:#93c5fd}
+button.primary{border-radius:8px;background:var(--accent);border-color:var(--accent)}
+button.primary:hover{background:#1d4ed8}
+
+/* 设置弹窗 */
+.settings-modal{width:min(820px,100%);padding:0;max-height:88vh;
+  display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+.modal-head h3{margin:0;font-size:16px;line-height:1.4}
+.modal-head small{display:block;margin-top:3px;color:var(--muted);font-size:11.5px}
+.modal-close{border:1px solid var(--line);background:#fff;border-radius:7px;
+  width:28px;height:28px;padding:0;line-height:1;cursor:pointer;color:var(--muted)}
+.modal-close:hover{background:#f4f4f5;color:var(--text)}
+.modal-body{padding:16px 20px;overflow:auto}
+.settings-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 20px;border-top:1px solid var(--line);background:var(--card);
+  margin:0;position:sticky;bottom:0}
+.settings-foot .actions{display:flex;gap:8px;flex-shrink:0}
+.settings-foot small{color:var(--muted);font-size:11px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.set-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px 16px;padding:14px 16px;margin:0 0 12px;
+  border:1px solid var(--line);border-radius:10px;background:#fff}
+.set-group + .set-group{margin-top:0;padding-top:14px;border-top:1px solid var(--line)}
+.set-title{grid-column:1/-1;font-size:12px;font-weight:650;color:#3f3f46;
+  letter-spacing:.02em;margin:0 0 2px;padding-bottom:8px;border-bottom:1px solid #f4f4f5}
+.set-group .field{margin:0;gap:4px}
+.set-group .field label{font-size:11.5px;color:#52525b}
+.set-group .set-row{grid-column:1/-1;padding:2px 0;font-size:12.5px}
+.set-group .field.wide{grid-column:1/-1}
+.set-group .field small{line-height:1.45}
+.set-row input[type=checkbox]{width:15px;height:15px;min-height:0;accent-color:var(--accent)}
+@media (max-width:640px){
+  .settings-modal{max-height:92vh}
+  .set-group{grid-template-columns:1fr}
+  .modal-body{padding:12px 14px}
+  .modal-head,.settings-foot{padding-left:14px;padding-right:14px}
+}
 </style>
 </head>
 <body>
@@ -213,13 +273,18 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 
 <!-- 设置弹窗 -->
 <div class="mask" id="setMask">
-  <div class="card modal">
-    <h3>设置</h3>
-    <div id="setBody"></div>
-    <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
-    <div class="modal-foot">
-      <button class="link" id="setCancel">取消</button>
-      <button class="primary" id="setSave">保存</button>
+  <div class="card modal settings-modal">
+    <div class="modal-head">
+      <div><h3>设置</h3><small>按分组调整；保存后写入插件配置</small></div>
+      <button class="modal-close" id="setClose" title="关闭">✕</button>
+    </div>
+    <div class="modal-body" id="setBody"></div>
+    <div class="settings-foot">
+      <small id="wikiMeta"></small>
+      <div class="actions">
+        <button class="link" id="setCancel">取消</button>
+        <button class="primary" id="setSave">保存</button>
+      </div>
     </div>
   </div>
 </div>
@@ -729,6 +794,8 @@ function syncConditions(){
 
 function fieldHTML(f, value){
   const dep = f.key.startsWith("wiki_") && f.key !== "wiki_enable" ? "wiki-dep" : "";
+  const wide = ["blacklist_groups", "reject_words", "extract_extra_body", "review_extra_body"].includes(f.key) ? "wide" : "";
+  const cls = `field ${dep} ${wide}`;
   const cond = f.condition ? ` data-condition="${esc(JSON.stringify(f.condition))}"` : "";
   const hint = f.hint ? `<small style="color:var(--muted);font-size:11px">${esc(f.hint)}</small>` : "";
   if (f.type === "bool"){
@@ -737,7 +804,7 @@ function fieldHTML(f, value){
       <span>${esc(f.label)}</span></label>`;
   }
   if (f.key === "provider_id"){
-    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
       <select data-key="provider_id"></select>${hint}</div>`;
   }
   if (Array.isArray(f.options) && f.options.length){
@@ -746,16 +813,16 @@ function fieldHTML(f, value){
     const opts = f.options.map((opt, i) =>
       `<option value="${esc(opt)}" ${String(opt) === cur ? "selected" : ""}>${esc(labels[i] || opt)}</option>`
     ).join("");
-    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
       <select data-key="${f.key}">${opts}</select>${hint}</div>`;
   }
   if (f.type === "int"){
     const min = f.min != null ? `min="${f.min}"` : "";
     const max = f.max != null ? `max="${f.max}"` : "";
-    return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
       <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" />${hint}</div>`;
   }
-  return `<div class="field ${dep}"${cond}><label>${esc(f.label)}</label>
+  return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
     <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" />${hint}</div>`;
 }
 
@@ -766,6 +833,7 @@ $("settingsBtn").onclick = async () => {
   $("setMask").classList.add("on");
 };
 $("setCancel").onclick = () => $("setMask").classList.remove("on");
+$("setClose").onclick = () => $("setMask").classList.remove("on");
 $("setSave").onclick = async () => {
   const payload = {};
   $("setBody").querySelectorAll("[data-key]").forEach(el => {
