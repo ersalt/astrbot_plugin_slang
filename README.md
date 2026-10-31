@@ -64,7 +64,7 @@
 | `learn_frequency` | 50 | 每个群攒多少条消息触发一次提取（5–10000） |
 | `learn_batch_size` | 15 | 分批学习每批消息数（3–40） |
 | `learn_batch_delay_ms` | 600 | 批间等待毫秒（0–5000） |
-| `learn_batch_timeout` | 120 | 单批提取超时秒数（30–600） |
+| `learn_batch_timeout` | 300 | 单批提取超时秒数（120–600，低于 300 按 300 处理） |
 | `extract_max` | 5 | 单次提取上限（1–100） |
 | `inject_max` | 3 | 单次注入上限（1–50） |
 | `max_meaning_chars` | 200 | 单条含义字数上限（20–1000） |

@@ -33,8 +33,8 @@
   "learn_batch_timeout": {
     "description": "分批学习：单批超时秒数，超时跳过该批",
     "type": "int",
-    "default": 120,
-    "min": 30,
+    "default": 300,
+    "min": 120,
     "max": 600
   },
   "extract_max": {

@@ -115,7 +115,8 @@ class Miner:
         self.reject_words = parse_words(config.get("reject_words", ""))
         self.batch_size = max(3, int(config.get("learn_batch_size", 15) or 15))
         self.batch_delay_ms = max(0, int(config.get("learn_batch_delay_ms", 600) or 600))
-        self.batch_timeout = max(30, int(config.get("learn_batch_timeout", 120) or 120))
+        # 思考模型单批 15 条经常超过 2 分钟；低于 300 秒一律抬到 300
+        self.batch_timeout = max(300, int(config.get("learn_batch_timeout", 300) or 300))
 
 
     def _provider(self, umo):

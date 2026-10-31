@@ -675,7 +675,8 @@ class JargonLite(Star):
             self.miner.reject_words = parse_words(self.config.get("reject_words", ""))
             self.miner.batch_size = max(3, int(self.config.get("learn_batch_size", 15)))
             self.miner.batch_delay_ms = max(0, int(self.config.get("learn_batch_delay_ms", 600)))
-            self.miner.batch_timeout = max(30, int(self.config.get("learn_batch_timeout", 120)))
+            self.miner.batch_timeout = max(
+                300, int(self.config.get("learn_batch_timeout", 300)))
         except Exception:  # noqa: BLE001
             pass
 
