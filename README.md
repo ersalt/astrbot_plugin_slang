@@ -64,14 +64,23 @@
 | LM Studio / OpenAI 兼容 | `custom_extra_body: {"reasoning_effort": "none"}`（实测有效） |
 | OpenAI | 提取用 `gpt-4.1-mini` / `gpt-4o-mini` 这类非推理模型，或用 `reasoning_effort: "minimal"` |
 | DeepSeek | 提取用 `deepseek-chat`，不要用 `deepseek-reasoner` |
-| Gemini | 用 `gemini-2.0-flash` 等非思考模型；AstrBot 的 Gemini provider 不接受 `thinking_budget` |
+| Gemini | 插件会注入 `gm_thinking_config.budget=0`；也可以用 `gemini-2.0-flash` |
 | GLM | 用 `glm-4-flash` / `glm-4-air` 等非思考模型 |
 
-插件默认开启 `extract_no_think`：学习时复制当前 provider，只把 `reasoning_effort: "none"` 塞进这次请求，**不需要在后台新建重复模型**。
+学习页有 `extract_thinking` 下拉，不需要在后台新建重复模型：
 
-- 支持该参数的 provider（LM Studio / 部分 OpenAI 兼容服务）：学习不思考
+| 选项 | 行为 |
+| --- | --- |
+| 自动识别 | 按 provider 猜参数，失败自动回退（默认） |
+| 不处理 | 保持思考 |
+| OpenAI / LM Studio | `reasoning_effort: "none"` |
+| GLM | `thinking.type = disabled` |
+| Gemini | `gm_thinking_config.budget = 0` |
+| DeepSeek | 尝试 `reasoning_effort: "none"`，建议同时换 `deepseek-chat` |
+| 自定义 | 显示额外输入框，填 JSON，例如 `{"reasoning_effort":"none"}` |
+
+- 只有选「自定义」才会显示 JSON 输入框
 - 不支持或报错：自动回退普通请求，聊天不受影响
-- 想完全不尝试：关闭 `extract_no_think`
 - 想用另一个模型提取：设置 `provider_id`，它优先级更高
 
 ## 设置页布局

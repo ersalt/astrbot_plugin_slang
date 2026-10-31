@@ -118,9 +118,33 @@ class Miner:
         self.batch_delay_ms = max(0, int(config.get("learn_batch_delay_ms", 600) or 600))
         # 思考模型单批 15 条经常超过 2 分钟；低于 300 秒一律抬到 300
         self.batch_timeout = max(300, int(config.get("learn_batch_timeout", 300) or 300))
-        # 学习时尝试关思考；provider 不支持时自动回退，不影响聊天
-        self.no_think = bool(config.get("extract_no_think", True))
+        # 学习时关思考的方式：auto/off/openai/glm/gemini/deepseek/custom
+        self.think_mode = self._resolve_think_mode(config)
+        self.extract_extra_body = self._parse_extra_body(
+            config.get("extract_extra_body", ""))
         self._no_think_blocked: set[str] = set()
+        self._thinking_logged: set[str] = set()
+
+    @staticmethod
+    def _resolve_think_mode(config) -> str:
+        mode = str(config.get("extract_thinking") or "").strip().lower()
+        if mode:
+            return mode
+        # 旧版布尔配置
+        return "auto" if bool(config.get("extract_no_think", True)) else "off"
+
+    @staticmethod
+    def _parse_extra_body(raw) -> dict:
+        if isinstance(raw, dict):
+            return raw
+        if not raw:
+            return {}
+        try:
+            value = json.loads(str(raw))
+            return value if isinstance(value, dict) else {}
+        except Exception:  # noqa: BLE001
+            logger.warning("[slang] extract_extra_body 不是合法 JSON，忽略")
+            return {}
 
 
     def _provider(self, umo):
@@ -150,22 +174,56 @@ class Miner:
         cfg = getattr(provider, "provider_config", {}) or {}
         return str(cfg.get("id") or id(provider))
 
+    def _thinking_extra(self, provider):
+        """返回 (custom_extra_body, provider_config 顶层覆盖)。"""
+        mode = self.think_mode
+        if mode == "off":
+            return {}, {}
+        if mode == "custom":
+            return dict(self.extract_extra_body), {}
+        if mode == "glm":
+            return {"thinking": {"type": "disabled"}}, {}
+        if mode == "gemini":
+            return {}, {"gm_thinking_config": {"budget": 0}}
+        if mode == "deepseek":
+            return {"reasoning_effort": "none"}, {}
+        if mode == "openai":
+            return {"reasoning_effort": "none"}, {}
+        # auto：按 provider 标识猜
+        cfg = getattr(provider, "provider_config", {}) or {}
+        blob = " ".join(str(cfg.get(k, "")) for k in
+                        ("id", "model", "provider_source_id", "type")).lower()
+        if "glm" in blob or "zhipu" in blob:
+            return {"thinking": {"type": "disabled"}}, {}
+        if "gemini" in blob:
+            return {}, {"gm_thinking_config": {"budget": 0}}
+        return {"reasoning_effort": "none"}, {}
+
     def _no_think_provider(self, provider):
         """复制 provider，只改 custom_extra_body；不改全局配置、不建新提供商。"""
-        if not self.no_think:
+        mode = self.think_mode
+        if mode == "off":
             return provider
-        key = self._provider_key(provider)
+        key = f"{self._provider_key(provider)}:{mode}"
         if key in self._no_think_blocked:
             return provider
         try:
-            cfg = dict(getattr(provider, "provider_config", {}) or {})
-            extra = dict(cfg.get("custom_extra_body") or {})
-            if extra.get("reasoning_effort"):
+            extra, updates = self._thinking_extra(provider)
+            if not extra and not updates:
                 return provider
-            extra["reasoning_effort"] = "none"
-            cfg["custom_extra_body"] = extra
+            cfg = dict(getattr(provider, "provider_config", {}) or {})
+            if extra:
+                merged = dict(cfg.get("custom_extra_body") or {})
+                merged.update(extra)
+                cfg["custom_extra_body"] = merged
+            for key, value in updates.items():
+                cfg[key] = value
             clone = copy.copy(provider)
             clone.provider_config = cfg
+            if mode not in self._thinking_logged:
+                self._thinking_logged.add(mode)
+                logger.info(
+                    f"[slang] 学习关思考模式 {mode}: extra={extra}, cfg={updates}")
             return clone
         except Exception:  # noqa: BLE001
             return provider
@@ -190,7 +248,8 @@ class Miner:
             except Exception as exc:  # noqa: BLE001
                 if use is provider:
                     raise
-                self._no_think_blocked.add(self._provider_key(provider))
+                self._no_think_blocked.add(
+                    f"{self._provider_key(provider)}:{self.think_mode}")
                 logger.info(
                     f"[slang] 该模型不支持关思考，回退普通请求：{exc}")
                 resp = await self._call_provider(provider, prompt, timeout)

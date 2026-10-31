@@ -88,6 +88,17 @@ def _migrate_flat_config(config) -> None:
     """把旧版扁平键搬进新分组，避免 AstrBot 补默认值后覆盖用户配置。"""
     leaves = _schema_leaves()
     changed = False
+    # 旧版布尔开关 -> 新版模式
+    if "extract_no_think" in config:
+        old = bool(config.pop("extract_no_think"))
+        mode = "auto" if old else "off"
+        learning = config.get("learning")
+        if not isinstance(learning, dict):
+            learning = {}
+            config["learning"] = learning
+        if not learning.get("extract_thinking") or learning.get("extract_thinking") == "auto":
+            learning["extract_thinking"] = mode
+        changed = True
     for key, (path, default) in leaves.items():
         if key not in config or isinstance(config.get(key), dict):
             continue

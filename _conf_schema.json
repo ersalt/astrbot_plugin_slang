@@ -71,10 +71,38 @@
         "type": "string",
         "default": ""
       },
-      "extract_no_think": {
-        "description": "学习/自审时尝试关闭模型思考（reasoning_effort=none）；不支持会自动回退，不影响聊天",
-        "type": "bool",
-        "default": true
+      "extract_thinking": {
+        "description": "学习时如何关闭模型思考",
+        "type": "string",
+        "default": "auto",
+        "options": [
+          "auto",
+          "off",
+          "openai",
+          "glm",
+          "gemini",
+          "deepseek",
+          "custom"
+        ],
+        "labels": [
+          "自动识别",
+          "不处理（保持思考）",
+          "OpenAI / LM Studio",
+          "GLM",
+          "Gemini",
+          "DeepSeek",
+          "自定义"
+        ],
+        "hint": "auto 会按 provider 猜参数并自动回退；custom 使用下面的自定义 JSON。DeepSeek 通常没有通用开关，建议提取直接换 deepseek-chat。"
+      },
+      "extract_extra_body": {
+        "description": "自定义请求参数（JSON）",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "extract_thinking": "custom"
+        },
+        "hint": "仅在「自定义」时显示。示例：{\"reasoning_effort\":\"none\"}、{\"thinking\":{\"type\":\"disabled\"}}、{\"thinking_config\":{\"thinking_budget\":0}}"
       }
     }
   },
