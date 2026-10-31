@@ -11,9 +11,9 @@ import re
 _SPLIT = re.compile(r"[,，、;；\s]+")
 
 
-def keys_of(name: str, aliases: str = "") -> list[str]:
+def keys_of(name: str, keywords: str = "", aliases: str = "") -> list[str]:
     out = []
-    for part in _SPLIT.split(f"{name},{aliases}"):
+    for part in _SPLIT.split(f"{name},{keywords},{aliases}"):
         k = part.strip().lower()
         if len(k) >= 2 and k not in out:
             out.append(k)
@@ -33,7 +33,8 @@ class KeywordIndex:
         for table, rows in rows_by_table.items():
             source = "manual" if table == "manual" else "ai"
             for r in rows:
-                keys = keys_of(r.get("name", ""), r.get("aliases", ""))
+                keys = keys_of(r.get("name", ""), r.get("keywords", ""),
+                               r.get("aliases", ""))
                 if not keys:
                     continue
                 eid = self._seq

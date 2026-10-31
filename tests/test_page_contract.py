@@ -27,6 +27,14 @@ class TestPageContract(unittest.TestCase):
     def test_toggle_global_sends_table(self):
         self.assertIn('"yh/toggle_global", { table: it.table', self.html)
 
+    def test_entry_fields(self):
+        self.assertIn('id="editKeywords"', self.html)
+        self.assertIn('id="editExtra"', self.html)
+        self.assertIn('id="addKeywords"', self.html)
+        self.assertIn('id="addExtra"', self.html)
+        self.assertIn("keywords:", self.html)
+        self.assertIn("extra:", self.html)
+
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 

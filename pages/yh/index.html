@@ -176,7 +176,9 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   <div class="card modal">
     <h3>修改词条</h3>
     <div class="field"><label>词条名</label><input id="editName" maxlength="32" /></div>
+    <div class="field"><label>关键词</label><input id="editKeywords" maxlength="300" placeholder="触发词，逗号分隔；不填则只用词条名" /></div>
     <div class="field"><label>内容</label><textarea id="editMeaning" maxlength="500"></textarea></div>
+    <div class="field"><label>其他</label><textarea id="editExtra" maxlength="500" placeholder="备注、出处、补充说明，不参与注入"></textarea></div>
     <div class="field"><label>归属</label><select id="editScope"></select></div>
     <div class="modal-foot">
       <div id="editErr" style="display:none;color:var(--danger);font-size:12px;margin-bottom:8px;line-height:1.5"></div>
@@ -190,8 +192,10 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <div class="mask" id="addMask">
   <div class="card modal">
     <h3>手动录入</h3>
-    <div class="field"><label>词条名</label><input id="addName" maxlength="32" placeholder="例如：梁文谷" /></div>
-    <div class="field"><label>内容</label><textarea id="addMeaning" maxlength="500" placeholder="例如：对梁文锋的戏称，调侃峰谷定价"></textarea></div>
+    <div class="field"><label>词条名</label><input id="addName" maxlength="32" placeholder="例如：梁文锋" /></div>
+    <div class="field"><label>关键词</label><input id="addKeywords" maxlength="300" placeholder="触发词，逗号分隔；例如：梁文峰,梁文谷" /></div>
+    <div class="field"><label>内容</label><textarea id="addMeaning" maxlength="500" placeholder="例如：DeepSeek 创始人"></textarea></div>
+    <div class="field"><label>其他</label><textarea id="addExtra" maxlength="500" placeholder="备注、出处、补充说明，不参与注入"></textarea></div>
     <div class="field"><label>作用域</label><select id="addScope"></select></div>
     <div class="modal-foot">
       <button class="link" id="addCancel">取消</button>
@@ -225,7 +229,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.4.10";
+const PAGE_BUILD = "v1.5.0";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
@@ -365,6 +369,8 @@ function entryHTML(it){
     <div class="name">${esc(it.content)}</div>
     <div class="content">
       <div class="meaning">${esc(it.meaning) || "（没有含义）"}</div>
+      ${it.keywords ? `<div class="meta">关键词：${esc(it.keywords)}</div>` : ""}
+      ${it.extra ? `<div class="meta">其他：${esc(it.extra)}</div>` : ""}
       <div class="meta">${meta}</div>
     </div>
     <div class="ops">
@@ -514,7 +520,9 @@ $("list").addEventListener("click", async e => {
   if (act === "edit"){
     editing = it;
     $("editName").value = it.content;
+    $("editKeywords").value = it.keywords || "";
     $("editMeaning").value = it.meaning || "";
+    $("editExtra").value = it.extra || "";
     fillScope($("editScope"), it.scope || "");
     $("editMask").classList.add("on");
     $("editName").focus();
@@ -538,7 +546,9 @@ $("editSave").onclick = async () => {
   let r;
   try {
     r = await Promise.race([
-      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope, name, meaning, scope: $("editScope").value }),
+      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope,
+        name, meaning, keywords: $("editKeywords").value.trim(),
+        extra: $("editExtra").value.trim(), scope: $("editScope").value }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), 10000)),
     ]);
   } catch (e) {
@@ -563,7 +573,8 @@ function fillScopeSelect(){
 $("addBtn").onclick = async () => {
   if (!state.tree) await loadTree();
   fillScopeSelect();
-  $("addName").value = ""; $("addMeaning").value = "";
+  $("addName").value = ""; $("addKeywords").value = "";
+  $("addMeaning").value = ""; $("addExtra").value = "";
   $("addMask").classList.add("on");
   $("addName").focus();
 };
@@ -573,7 +584,8 @@ $("addSave").onclick = async () => {
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
-  const r = await api("yh/add", { content: name, meaning, scope });
+  const r = await api("yh/add", { content: name, meaning, scope,
+    keywords: $("addKeywords").value.trim(), extra: $("addExtra").value.trim() });
   showResult(r, "录入结果");
   if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
 };
@@ -586,7 +598,8 @@ function renderSettings(d){
   cfgValues = d.values || {};
   const groups = [
     { title: "基础", keys: ["enabled", "auto_learn", "listen_private", "blacklist_groups"] },
-    { title: "学习与注入", keys: ["learn_frequency", "extract_max", "inject_max",
+    { title: "学习与注入", keys: ["learn_frequency", "learn_batch_size",
+        "learn_batch_delay_ms", "learn_batch_timeout", "extract_max", "inject_max",
         "max_meaning_chars", "provider_id"] },
     { title: "梗百科", keys: ["wiki_enable", "wiki_sync_enable",
         "wiki_sync_interval_days", "wiki_sync_time"] },

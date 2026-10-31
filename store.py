@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS {t} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     aliases TEXT NOT NULL DEFAULT '',
+    keywords TEXT NOT NULL DEFAULT '',
+    extra TEXT NOT NULL DEFAULT '',
     meaning TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 1,
@@ -83,10 +85,11 @@ class Repo:
         now = time.time()
         with self.lock:
             cur = self.conn.execute(
-                f"""INSERT INTO {self.t}(name, aliases, meaning, scope, count,
-                    auto_note, evidence, contributor, created_at, updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (data["name"], data.get("aliases", ""), data.get("meaning", ""),
+                f"""INSERT INTO {self.t}(name, aliases, keywords, extra, meaning, scope,
+                    count, auto_note, evidence, contributor, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (data["name"], data.get("aliases", ""), data.get("keywords", ""),
+                 data.get("extra", ""), data.get("meaning", ""),
                  data.get("scope", ""), data.get("count", 1),
                  data.get("auto_note", ""), data.get("evidence", "[]"),
                  data.get("contributor", ""),
@@ -96,8 +99,8 @@ class Repo:
         return self.get(rid)
 
     def update(self, rid: int, **fields) -> dict | None:
-        allowed = ("name", "aliases", "meaning", "scope", "count",
-                   "auto_note", "evidence", "contributor")
+        allowed = ("name", "aliases", "keywords", "extra", "meaning", "scope",
+                   "count", "auto_note", "evidence", "contributor")
         sets, params = [], []
         for k, v in fields.items():
             if k in allowed and v is not None:
@@ -166,6 +169,8 @@ class JargonStore:
         with self._lock:
             self._init_schema()
             self._migrate_legacy()
+            if self.meta_get("schema_version") != "5":
+                self.meta_set("schema_version", "5")
             self.conn.execute("DELETE FROM buffer WHERE ts < ?",
                               (time.time() - 7 * 86400,))
             self.conn.commit()
@@ -177,6 +182,7 @@ class JargonStore:
             for stmt in SCHEMA_INDEX.format(t=t).split(";"):
                 if stmt.strip():
                     self.conn.execute(stmt)
+        self._ensure_columns()
         self.conn.executescript("""
         CREATE TABLE IF NOT EXISTS wiki (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +205,22 @@ class JargonStore:
         """)
         self.conn.commit()
 
+    def _ensure_columns(self):
+        """给四张表补 keywords / extra 列，兼容 1.4.x 升级。"""
+        for t in TABLES:
+            cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({t})")}
+            if "keywords" not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {t} ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+            if "extra" not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {t} ADD COLUMN extra TEXT NOT NULL DEFAULT ''")
+            # 1.4.x 的 aliases 迁进 keywords，旧页面/旧数据仍能触发
+            self.conn.execute(
+                f"UPDATE {t} SET keywords = aliases "
+                "WHERE keywords = '' AND aliases <> ''")
+        self.conn.commit()
+
     # ---------- 旧库迁移 ----------
 
     def _migrate_legacy(self):
@@ -216,7 +238,7 @@ class JargonStore:
         old_tables = [t for t in ("jargon", "pending") if t in existing]
         if not old_tables:
             if self.meta_get("schema_version") is None:
-                self.meta_set("schema_version", "4")
+                self.meta_set("schema_version", "5")
             return
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -259,10 +281,13 @@ class JargonStore:
                         scope = ""
 
                     self.conn.execute(
-                        f"""INSERT OR IGNORE INTO {table}(name, aliases, meaning, scope,
-                            count, auto_note, evidence, contributor, created_at, updated_at)
-                            VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                        (name, row.get("aliases") or "", meaning, scope,
+                        f"""INSERT OR IGNORE INTO {table}(name, aliases, keywords, extra,
+                            meaning, scope, count, auto_note, evidence, contributor,
+                            created_at, updated_at)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (name, row.get("aliases") or "",
+                         row.get("keywords") or row.get("aliases") or "", "",
+                         meaning, scope,
                          row.get("count") or 1, row.get("auto_note") or "",
                          row.get("evidence") or "[]",
                          row.get("contributor") or "",
@@ -271,7 +296,7 @@ class JargonStore:
             for old in old_tables:
                 self.conn.execute(f"DROP TABLE {old}")
             self.conn.execute(
-                "INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version', '4')")
+                "INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version', '5')")
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -324,9 +349,17 @@ class JargonStore:
     def buffer_take(self, umo: str, limit: int) -> list[dict]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT sender, text FROM buffer WHERE umo = ? ORDER BY id LIMIT ?",
+                "SELECT id, sender, text FROM buffer WHERE umo = ? ORDER BY id LIMIT ?",
                 (umo, limit)).fetchall()
             return [dict(r) for r in rows]
+
+    def buffer_delete(self, ids: list[int]):
+        if not ids:
+            return
+        with self._lock:
+            marks = ",".join("?" for _ in ids)
+            self.conn.execute(f"DELETE FROM buffer WHERE id IN ({marks})", ids)
+            self.conn.commit()
 
     def buffer_drop(self, umo: str):
         with self._lock:

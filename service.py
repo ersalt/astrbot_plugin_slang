@@ -5,6 +5,8 @@
 API 层（main.py）只负责解析参数，所有规则集中在这里。
 """
 
+import re
+
 try:
     from .index import KeywordIndex
     from .store import APPROVED, PENDING, JargonStore, TABLES
@@ -44,7 +46,9 @@ def public(row: dict, table: str) -> dict:
         "count": row["count"],
         "scope": row["scope"] or "",
         "is_global": not row["scope"],
-        "aliases": row["aliases"],
+        "aliases": row.get("aliases", ""),
+        "keywords": row.get("keywords", ""),
+        "extra": row.get("extra", ""),
         "auto_note": row["auto_note"],
         "contributor": row["contributor"],
         "evidence": row["evidence"],
@@ -79,49 +83,66 @@ class SlangService:
 
     # ---------- 写入 ----------
 
+    @staticmethod
+    def _norm_keywords(raw) -> str:
+        parts = []
+        for x in re.split(r"[,，、;；\s]+", str(raw or "")):
+            x = x.strip()
+            if x and x not in parts:
+                parts.append(x)
+        return ",".join(parts)[:300]
+
     def add_manual(self, name: str, meaning: str, scope: str = "",
-                   aliases: str = "") -> dict:
+                   keywords: str = "", extra: str = "", aliases: str = "") -> dict:
         name = (name or "").strip()[:32]
         meaning = (meaning or "").strip()[:1000]
         if not name or not meaning:
             raise SlangError("词条名和内容都不能为空")
+        keywords = self._norm_keywords(keywords or aliases)
         for t in ("manual", "manual_pending"):
             if self._repo(t).find(name, scope):
                 raise SlangError(
                     f"「{name}」在该作用域已存在（{SIDE[t]}），未覆盖。要改内容请用「修改」。")
         rec = self._repo("manual").insert({
             "name": name, "meaning": meaning, "scope": scope,
-            "aliases": aliases, "evidence": '["手动录入"]',
-            "contributor": "手动录入",
+            "aliases": "", "keywords": keywords,
+            "extra": (extra or "").strip()[:1000],
+            "evidence": '["手动录入"]', "contributor": "手动录入",
         })
         self.invalidate()
         return rec
 
-    def _bump(self, repo, rec: dict, evidence: str, auto_note: str):
+    def _bump(self, repo, rec: dict, evidence: str, auto_note: str,
+              keywords: str = ""):
+        merged = self._norm_keywords(
+            ",".join(x for x in (rec.get("keywords") or "", keywords) if x))
         repo.update(rec["id"],
                     count=(rec["count"] or 1) + 1,
+                    keywords=merged or rec.get("keywords") or "",
                     evidence=self.store.merge_evidence(
                         rec["evidence"], self.store.pack_evidence(evidence)),
                     auto_note=auto_note or rec["auto_note"])
 
     def submit(self, name: str, meaning: str, scope: str = "", aliases: str = "",
                evidence: str = "", auto_note: str = "", approved: bool = False,
-               contributor: str = "") -> dict:
+               contributor: str = "", keywords: str = "") -> dict:
         name = (name or "").strip()[:32]
         meaning = (meaning or "").strip()[:1000]
         if not name or not meaning:
             return {}
         auto = self._repo("auto")
         pending = self._repo("auto_pending")
+        kw = self._norm_keywords(keywords or aliases)
         done = auto.find(name, scope)
         if done:
             # 已审优先：重复学习只累加，绝不再造一条同名待审
-            self._bump(auto, done, evidence, auto_note)
+            self._bump(auto, done, evidence, auto_note, kw)
         elif approved:
             draft = pending.find(name, scope)
             if draft:
                 auto.insert({
                     "name": draft["name"], "aliases": draft["aliases"],
+                    "keywords": draft.get("keywords", ""), "extra": draft.get("extra", ""),
                     "meaning": draft["meaning"], "scope": draft["scope"],
                     "count": draft["count"], "auto_note": draft["auto_note"],
                     "evidence": draft["evidence"], "contributor": draft["contributor"],
@@ -131,18 +152,18 @@ class SlangService:
             else:
                 auto.insert({
                     "name": name, "meaning": meaning, "scope": scope,
-                    "aliases": aliases,
+                    "aliases": "", "keywords": kw,
                     "evidence": self.store.pack_evidence(evidence),
                     "auto_note": auto_note, "contributor": contributor,
                 })
         else:
             draft = pending.find(name, scope)
             if draft:
-                self._bump(pending, draft, evidence, auto_note)
+                self._bump(pending, draft, evidence, auto_note, kw)
             else:
                 pending.insert({
                     "name": name, "meaning": meaning, "scope": scope,
-                    "aliases": aliases,
+                    "aliases": "", "keywords": kw,
                     "evidence": self.store.pack_evidence(evidence),
                     "auto_note": auto_note, "contributor": contributor,
                 })
@@ -150,7 +171,8 @@ class SlangService:
         return (auto.find(name, scope) or pending.find(name, scope) or {})
 
     def update(self, table: str, old_name: str, old_scope: str,
-               name: str = "", meaning: str = "", scope: str | None = None) -> dict:
+               name: str = "", meaning: str = "", scope: str | None = None,
+               keywords: str | None = None, extra: str | None = None) -> dict:
         repo = self._repo(table)
         rec = repo.find(old_name, old_scope)
         if not rec:
@@ -167,7 +189,10 @@ class SlangService:
         out = repo.update(rec["id"],
                           name=new_name,
                           meaning=(meaning or rec["meaning"]).strip()[:1000],
-                          scope=new_scope)
+                          scope=new_scope,
+                          keywords=(self._norm_keywords(keywords)
+                                    if keywords is not None else None),
+                          extra=(extra.strip()[:1000] if extra is not None else None))
         if not out:
             raise SlangError("改名或改归属失败，可能重名")
         self.invalidate()

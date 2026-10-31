@@ -83,6 +83,7 @@ class JargonLite(Star):
             self._wiki_keys = []
         self._locks: dict[str, asyncio.Lock] = {}
         self._learning: set[str] = set()
+        self._learn_cooldown: dict[str, float] = {}
         self._wiki_task = None
         self._wiki_running = False
         self._web_registered = False
@@ -241,8 +242,9 @@ class JargonLite(Star):
             return
         if umo in self._learning:
             return
+        if time.time() < self._learn_cooldown.get(umo, 0):
+            return
         messages = self.store.buffer_take(umo, self.learn_frequency)
-        self.store.buffer_drop(umo)
         self._learning.add(umo)
         asyncio.create_task(self._learn(umo, scope, messages))
 
@@ -251,9 +253,17 @@ class JargonLite(Star):
         try:
             async with lock:
                 n = await self.miner.learn(umo, scope, messages)
-                logger.info(f"[slang] {scope} 本轮入库 {n} 条")
+            if n is None:
+                # 全部批次失败：保留缓冲，冷却后重试
+                self._learn_cooldown[umo] = time.time() + 300
+                logger.warning(f"[slang] {scope} 学习未完成，缓冲保留，5 分钟后重试")
+                return
+            ids = [m["id"] for m in messages if "id" in m]
+            self.store.buffer_delete(ids)
+            logger.info(f"[slang] {scope} 本轮入库 {n} 条，已清理 {len(ids)} 条缓冲")
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"[slang] 学习异常: {exc}")
+            self._learn_cooldown[umo] = time.time() + 300
+            logger.error(f"[slang] 学习异常，缓冲保留: {exc}")
         finally:
             self._learning.discard(umo)
 
@@ -492,8 +502,11 @@ class JargonLite(Star):
         scope = str(p.get("scope") or "").strip()
         if scope == "__global__":
             scope = ""
+        keywords = str(p.get("keywords") or p.get("aliases") or "").strip()
+        extra = str(p.get("extra") or "").strip()
         try:
-            self.svc.add_manual(content, meaning, scope=scope)
+            self.svc.add_manual(content, meaning, scope=scope,
+                                keywords=keywords, extra=extra)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001
@@ -510,6 +523,8 @@ class JargonLite(Star):
         scope = str(p.get("scope") or "").strip() if "scope" in p else None
         if scope == "__global__":
             scope = ""
+        keywords = str(p.get("keywords") or "").strip() if "keywords" in p else None
+        extra = str(p.get("extra") or "").strip() if "extra" in p else None
         table = str(p.get("table") or "").strip()
         if table not in TABLES:
             table = self._resolve_edit_table(
@@ -519,7 +534,8 @@ class JargonLite(Star):
                     "message": "页面版本过旧，无法确定要修改哪张表。请按 Ctrl+F5 强制刷新后重试。",
                     "data": {}}
         try:
-            rec = self.svc.update(table, old_name, old_scope, name, meaning, scope)
+            rec = self.svc.update(table, old_name, old_scope, name, meaning, scope,
+                                  keywords=keywords, extra=extra)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001
@@ -632,6 +648,9 @@ class JargonLite(Star):
         try:
             self.miner.extract_max = max(1, int(self.config.get("extract_max", 5)))
             self.miner.reject_words = parse_words(self.config.get("reject_words", ""))
+            self.miner.batch_size = max(3, int(self.config.get("learn_batch_size", 15)))
+            self.miner.batch_delay_ms = max(0, int(self.config.get("learn_batch_delay_ms", 600)))
+            self.miner.batch_timeout = max(30, int(self.config.get("learn_batch_timeout", 120)))
         except Exception:  # noqa: BLE001
             pass
 
