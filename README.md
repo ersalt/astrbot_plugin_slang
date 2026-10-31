@@ -96,17 +96,20 @@ AstrBot 插件设置页按分组显示：
 
 旧版扁平配置会在启动时自动迁移到对应分组，不需要手动改。
 
-学习调度：缓冲达到 `learn_frequency` 后不会立刻开始，而是等「距离机器人最后一次回复」满 `learn_idle_seconds`；多个群的学习任务由单 worker 串行执行，前一个群结束并间隔 5 秒后才开始下一个。缓冲达到 2 倍阈值时强制开始，避免活跃群一直不学。
+学习调度：缓冲达到 `learn_frequency` 后不会立刻开始，而是等「距离机器人最后一次回复」满 `learn_idle_seconds`；多个群的学习任务由单 worker 串行执行，前一个群结束并间隔 `learn_group_gap_seconds` 后才开始下一个。缓冲达到 `learn_force_multiplier` 倍阈值时强制开始，避免活跃群一直不学。
 
 ## 配置
 
-后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 17 项。
+后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 24 项。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `enabled` | true | 总开关：关掉后不学习也不注入 |
 | `auto_learn` | true | 只关学习，注入照常 |
 | `learn_frequency` | 50 | 每个群攒多少条消息触发一次提取（5–10000） |
+| `learn_idle_seconds` | 120 | 距机器人最后一次回复多少秒后才开始学习；0 为不等待 |
+| `learn_force_multiplier` | 2 | 缓冲达到阈值几倍时强制学习；0 为不强制 |
+| `learn_group_gap_seconds` | 5 | 一个群学完后间隔多少秒再跑下一个群 |
 | `learn_batch_size` | 15 | 分批学习每批消息数（3–40） |
 | `learn_batch_delay_ms` | 600 | 批间等待毫秒（0–5000） |
 | `learn_batch_timeout` | 300 | 单批提取超时秒数（120–600，低于 300 按 300 处理） |
@@ -114,6 +117,10 @@ AstrBot 插件设置页按分组显示：
 | `inject_max` | 3 | 单次注入上限（1–50） |
 | `max_meaning_chars` | 200 | 单条含义字数上限（20–1000） |
 | `provider_id` | 空 | 提取用的模型，留空用当前会话模型 |
+| `extract_thinking` | auto | 提取关思考方式：自动/不处理/OpenAI/GLM/Gemini/DeepSeek/自定义 |
+| `extract_extra_body` | 空 | 提取选「自定义」时显示的 JSON |
+| `review_thinking` | off | 自审关思考方式；off 表示保持思考 |
+| `review_extra_body` | 空 | 自审选「自定义」时显示的 JSON |
 | `listen_private` | false | 是否也学私聊 |
 | `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
 | `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。分隔符同黑名单 |
