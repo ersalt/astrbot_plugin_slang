@@ -46,6 +46,10 @@ class TestPageContract(unittest.TestCase):
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 
+    def test_pending_pick_wrap(self):
+        self.assertIn('class="pick-wrap"', self.html)
+        self.assertIn(".entry .pick[type=checkbox]{width:16px", self.html)
+
     def test_settings_groups_and_selects(self):
         self.assertIn("f.group_label", self.html)
         self.assertIn("Array.isArray(f.options)", self.html)

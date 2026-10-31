@@ -193,8 +193,11 @@ button.primary:hover{background:#1d4ed8}
 .set-group .field.wide{grid-column:1/-1}
 .set-group .field small{line-height:1.45}
 input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0;accent-color:var(--accent)}
-.entry .pick[type=checkbox]{width:18px;height:18px;min-height:18px;padding:0;margin:0;
-  border-radius:3px;flex:0 0 18px;justify-self:center}
+.pick-wrap{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+  justify-self:center;cursor:pointer;border-radius:5px}
+.pick-wrap:hover{background:#f4f4f5}
+.entry .pick[type=checkbox]{width:16px;height:16px;min-height:16px;padding:0;margin:0;
+  border-radius:3px;flex:0 0 16px}
 .set-row input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0}
 @media (max-width:640px){
   .settings-modal{max-height:92vh}
@@ -459,7 +462,7 @@ function entryHTML(it){
     it.updated_at ? fmtDate(it.updated_at) : "",
     note].filter(Boolean).join(" · ");
   const pick = it.pending
-    ? `<input type="checkbox" class="pick" data-id="${it.id}" ${state.selected.has(String(it.id)) ? "checked" : ""} />`
+    ? `<label class="pick-wrap"><input type="checkbox" class="pick" data-id="${it.id}" ${state.selected.has(String(it.id)) ? "checked" : ""} /></label>`
     : "";
   return `
   <div class="entry${it.pending ? " pending" : ""}" data-id="${it.id}">
