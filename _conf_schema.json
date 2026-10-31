@@ -38,6 +38,14 @@
         "min": 5,
         "max": 10000
       },
+      "learn_idle_seconds": {
+        "description": "距机器人最后一次回复多少秒后才开始学习",
+        "type": "int",
+        "default": 120,
+        "min": 0,
+        "max": 1800,
+        "hint": "0 表示不等待；默认 120 秒。缓冲达到 2 倍阈值时会强制开始，避免活跃群一直学不了。"
+      },
       "learn_batch_size": {
         "description": "分批学习：每批多少条消息（建议 10-20，太小语境不足）",
         "type": "int",

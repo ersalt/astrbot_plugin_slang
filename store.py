@@ -370,6 +370,11 @@ class JargonStore:
             return self.conn.execute(
                 "SELECT COUNT(*) FROM buffer WHERE umo = ?", (umo,)).fetchone()[0]
 
+    def buffer_count(self, umo: str) -> int:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM buffer WHERE umo = ?", (umo,)).fetchone()[0]
+
     def buffer_take(self, umo: str, limit: int) -> list[dict]:
         with self._lock:
             rows = self.conn.execute(

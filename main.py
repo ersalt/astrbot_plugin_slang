@@ -140,6 +140,7 @@ class JargonLite(Star):
         self.enabled = bool(self.cfg.get("enabled", True))
         self.auto_learn = bool(self.cfg.get("auto_learn", True))
         self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
+        self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 120)))
         self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
         self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
         self.wiki_enable = bool(self.cfg.get("wiki_enable", True))
@@ -158,7 +159,10 @@ class JargonLite(Star):
             self._wiki_keys = []
         self._locks: dict[str, asyncio.Lock] = {}
         self._learning: set[str] = set()
+        self._learn_pending: dict[str, str] = {}
         self._learn_cooldown: dict[str, float] = {}
+        self._last_reply_at: dict[str, float] = {}
+        self._learn_task = None
         self._wiki_task = None
         self._wiki_running = False
         self._web_registered = False
@@ -240,6 +244,8 @@ class JargonLite(Star):
         try:
             if self._wiki_task:
                 self._wiki_task.cancel()
+            if self._learn_task:
+                self._learn_task.cancel()
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -317,11 +323,62 @@ class JargonLite(Star):
             return
         if umo in self._learning:
             return
-        if time.time() < self._learn_cooldown.get(umo, 0):
-            return
-        messages = self.store.buffer_take(umo, self.learn_frequency)
-        self._learning.add(umo)
-        asyncio.create_task(self._learn(umo, scope, messages))
+        self._learn_pending[umo] = scope
+        self._ensure_learn_scheduler()
+
+    @filter.on_llm_response()
+    async def note_bot_reply(self, event: AstrMessageEvent, response):
+        """记录机器人最后一次回复，学习调度用它判断是否已空闲 120 秒。"""
+        umo = event.unified_msg_origin or ""
+        if umo:
+            self._last_reply_at[umo] = time.time()
+
+    def _ensure_learn_scheduler(self):
+        if self._learn_task is None or self._learn_task.done():
+            self._learn_task = asyncio.create_task(self._learn_scheduler())
+
+    async def _learn_scheduler(self):
+        """单 worker 串行学习：同一时间只跑一个群，避免多群同时抢模型。"""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if self._learning or not self._learn_pending:
+                    continue
+                now = time.time()
+                ready = []
+                for umo, scope in list(self._learn_pending.items()):
+                    if now < self._learn_cooldown.get(umo, 0):
+                        continue
+                    count = self.store.buffer_count(umo)
+                    if count < self.learn_frequency:
+                        self._learn_pending.pop(umo, None)
+                        continue
+                    idle = now - self._last_reply_at.get(umo, 0)
+                    # 距离机器人最后一次回复满 N 秒；缓冲达到 2 倍阈值强制启动
+                    if idle < self.learn_idle_seconds and count < self.learn_frequency * 2:
+                        continue
+                    ready.append((self._last_reply_at.get(umo, 0), umo, scope))
+                if not ready:
+                    continue
+                ready.sort(key=lambda item: item[0])
+                _, umo, scope = ready[0]
+                self._learn_pending.pop(umo, None)
+                messages = self.store.buffer_take(umo, self.learn_frequency)
+                if not messages:
+                    continue
+                self._learning.add(umo)
+                try:
+                    await self._learn(umo, scope, messages)
+                finally:
+                    self._learning.discard(umo)
+                if self.store.buffer_count(umo) >= self.learn_frequency:
+                    self._learn_pending[umo] = scope
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[slang] 学习调度异常: {exc}")
+                await asyncio.sleep(5)
 
     async def _learn(self, umo: str, scope: str, messages: list[dict]):
         lock = self._locks.setdefault(umo, asyncio.Lock())
@@ -762,6 +819,7 @@ class JargonLite(Star):
         self.enabled = bool(self.cfg.get("enabled", True))
         self.auto_learn = bool(self.cfg.get("auto_learn", True))
         self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
+        self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 120)))
         self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
         self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
         self.wiki_enable = bool(self.cfg.get("wiki_enable", True))

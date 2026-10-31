@@ -327,6 +327,7 @@ class TestBuffer(unittest.IsolatedAsyncioTestCase):
         before = len(self.store.buffer_take("u", 10))
         self.store.buffer_add("u", "A", "看图 [图片]")
         self.store.buffer_add("u", "A", "[图片]")
+        self.assertEqual(self.store.buffer_count("u"), before + 1)
         rows = self.store.buffer_take("u", 10)
         self.assertEqual(len(rows), before + 1)
         self.assertEqual(rows[-1]["text"], "看图")
