@@ -565,6 +565,11 @@ $("editSave").onclick = async () => {
     showAlert("词条名和内容都不能为空", "没法保存");
     return;
   }
+  if (meaning.length > meaningLimit){
+    showAlert(`内容 ${meaning.length}/${meaningLimit} 字，超出 ${meaning.length - meaningLimit} 字。\n请删减后再保存。`, "内容超长");
+    $("editMeaning").focus();
+    return;
+  }
   const err = $("editErr");
   if (err) err.style.display = "none";
   let r;
@@ -625,6 +630,11 @@ $("addSave").onclick = async () => {
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
+  if (meaning.length > meaningLimit){
+    showAlert(`内容 ${meaning.length}/${meaningLimit} 字，超出 ${meaning.length - meaningLimit} 字。\n请删减后再录入。`, "内容超长");
+    $("addMeaning").focus();
+    return;
+  }
   let pre;
   try {
     pre = await callApi("yh/lookup", { name, scope });

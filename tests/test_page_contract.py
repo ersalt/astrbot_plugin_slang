@@ -39,6 +39,10 @@ class TestPageContract(unittest.TestCase):
         self.assertIn('"yh/lookup"', self.html)
         self.assertIn("showConfirm", self.html)
 
+    def test_meaning_limit_guard(self):
+        self.assertIn("meaning.length > meaningLimit", self.html)
+        self.assertIn("内容超长", self.html)
+
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 

@@ -515,6 +515,11 @@ class JargonLite(Star):
         if scope == "__global__":
             scope = ""
         keywords = str(p.get("keywords") or p.get("aliases") or "").strip()
+        limit = max(1, int(self.config.get("max_meaning_chars", 200)))
+        if len(meaning) > limit:
+            return {"status": "error",
+                    "message": f"内容 {len(meaning)}/{limit} 字，请删减后再录入",
+                    "data": {}}
         try:
             self.svc.add_manual(content, meaning, scope=scope,
                                 keywords=keywords)
@@ -547,6 +552,11 @@ class JargonLite(Star):
         if table not in TABLES:
             return {"status": "error",
                     "message": "页面版本过旧，无法确定要修改哪张表。请按 Ctrl+F5 强制刷新后重试。",
+                    "data": {}}
+        limit = max(1, int(self.config.get("max_meaning_chars", 200)))
+        if len(meaning) > limit:
+            return {"status": "error",
+                    "message": f"内容 {len(meaning)}/{limit} 字，请删减后再保存",
                     "data": {}}
         try:
             rec = self.svc.update(table, old_name, old_scope, name, meaning, scope,
