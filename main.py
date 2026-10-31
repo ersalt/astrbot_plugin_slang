@@ -665,8 +665,6 @@ class JargonLite(Star):
         try:
             self.miner.extract_max = max(1, int(self.config.get("extract_max", 5)))
             self.miner.reject_words = parse_words(self.config.get("reject_words", ""))
-            self.miner.filter_person_ids = bool(
-                self.config.get("filter_person_ids", True))
             self.miner.batch_size = max(3, int(self.config.get("learn_batch_size", 15)))
             self.miner.batch_delay_ms = max(0, int(self.config.get("learn_batch_delay_ms", 600)))
             self.miner.batch_timeout = max(30, int(self.config.get("learn_batch_timeout", 120)))

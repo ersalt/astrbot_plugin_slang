@@ -99,10 +99,5 @@
     "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
     "type": "string",
     "default": ""
-  },
-  "filter_person_ids": {
-    "description": "过滤「群友 XXX 的 ID」这类同义反复的自动词条（保留别称、外号）",
-    "type": "bool",
-    "default": true
   }
 }

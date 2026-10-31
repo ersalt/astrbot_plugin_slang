@@ -55,7 +55,7 @@
 
 ## 配置
 
-后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 18 项。
+后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 17 项。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -72,7 +72,6 @@
 | `listen_private` | false | 是否也学私聊 |
 | `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
 | `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。分隔符同黑名单 |
-| `filter_person_ids` | true | 过滤「群友 XXX 的 ID」这类同义反复的自动词条，保留别称 |
 | `wiki_enable` | true | 启用梗百科；关掉后隐藏侧栏入口，也不参与注入 |
 | `wiki_sync_enable` | false | 是否定时同步梗Wiki |
 | `wiki_sync_interval_days` | 7 | 同步间隔（天，1–365） |

@@ -116,7 +116,7 @@ class Miner:
         self.batch_size = max(3, int(config.get("learn_batch_size", 15) or 15))
         self.batch_delay_ms = max(0, int(config.get("learn_batch_delay_ms", 600) or 600))
         self.batch_timeout = max(30, int(config.get("learn_batch_timeout", 120) or 120))
-        self.filter_person_ids = bool(config.get("filter_person_ids", True))
+
 
     def _provider(self, umo):
         pid = str(self.config.get("provider_id") or "").strip()
@@ -226,16 +226,15 @@ class Miner:
             return 0
 
         cleaned = list(candidates.values())[: self.extract_max]
-        if self.filter_person_ids:
-            kept = []
-            for it in cleaned:
-                if is_low_value(it["name"], it["meaning"]):
-                    logger.info(f"[slang] {scope} 过滤无信息量 ID 词条：{it['name']}")
-                    continue
-                kept.append(it)
-            cleaned = kept
-            if not cleaned:
-                return 0
+        kept = []
+        for it in cleaned:
+            if is_low_value(it["name"], it["meaning"]):
+                logger.info(f"[slang] {scope} 过滤无信息量 ID 词条：{it['name']}")
+                continue
+            kept.append(it)
+        cleaned = kept
+        if not cleaned:
+            return 0
         if self.reject_words:
             kept = []
             for it in cleaned:
