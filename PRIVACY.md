@@ -37,7 +37,7 @@ data/plugin_data/astrbot_plugin_slang/jargon.db
 
 | 时机 | 处理 |
 | --- | --- |
-| 攒够 `learn_frequency` 条并完成一次提取 | 清空该群的缓冲 |
+| 攒够 `learn_frequency` 条并完成一次提取 | 删除本次已处理的消息；学习期间新来的消息保留 |
 | 插件启动 | 清理 7 天前的缓冲 |
 | 缓冲超过 2 万行 | 自动截断最旧的 |
 | 词条 | 一直保留，直到在页面或指令里删除 |
