@@ -49,6 +49,79 @@ def _read_version(default: str = "0.0.0") -> str:
 PLUGIN_VERSION = _read_version()
 
 
+def _flatten_config(raw) -> dict:
+    """兼容 AstrBot 分组 schema 与旧版扁平配置。"""
+    out = {}
+    for key, value in (raw or {}).items():
+        if isinstance(value, dict):
+            out.update(_flatten_config(value))
+        else:
+            out[key] = value
+    return out
+
+
+def _schema_leaves() -> dict:
+    """返回 {叶子键: (分组路径, 默认值)}。"""
+    try:
+        raw = json.loads((pathlib.Path(__file__).parent / "_conf_schema.json")
+                         .read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+    leaves = {}
+
+    def walk(items, prefix):
+        for key, spec in items.items():
+            path = prefix + (key,)
+            if spec.get("type") == "object" and isinstance(spec.get("items"), dict):
+                walk(spec["items"], path)
+            else:
+                leaves[key] = (path, spec.get("default"))
+
+    walk(raw, ())
+    return leaves
+
+
+_MISSING = object()
+
+
+def _migrate_flat_config(config) -> None:
+    """把旧版扁平键搬进新分组，避免 AstrBot 补默认值后覆盖用户配置。"""
+    leaves = _schema_leaves()
+    changed = False
+    # 旧版布尔开关 -> 新版模式
+    if "extract_no_think" in config:
+        old = bool(config.pop("extract_no_think"))
+        mode = "auto" if old else "off"
+        learning = config.get("learning")
+        if not isinstance(learning, dict):
+            learning = {}
+            config["learning"] = learning
+        if not learning.get("extract_thinking") or learning.get("extract_thinking") == "auto":
+            learning["extract_thinking"] = mode
+        changed = True
+    for key, (path, default) in leaves.items():
+        if key not in config or isinstance(config.get(key), dict):
+            continue
+        flat_value = config[key]
+        node = config
+        for part in path[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        current = node.get(path[-1], _MISSING)
+        if current is _MISSING or current == default:
+            node[path[-1]] = flat_value
+        config.pop(key, None)
+        changed = True
+    if changed and hasattr(config, "save_config"):
+        try:
+            config.save_config()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @register(
     "astrbot_plugin_slang",
     "贰叔",
@@ -61,28 +134,37 @@ class JargonLite(Star):
         super().__init__(context)
         self.context = context
         self.config = config or {}
+        _migrate_flat_config(self.config)
+        self.cfg = _flatten_config(self.config)
 
-        self.enabled = bool(self.config.get("enabled", True))
-        self.auto_learn = bool(self.config.get("auto_learn", True))
-        self.learn_frequency = max(5, int(self.config.get("learn_frequency", 50)))
-        self.inject_max = max(1, int(self.config.get("inject_max", 3)))
-        self.max_meaning = max(20, int(self.config.get("max_meaning_chars", 200)))
-        self.wiki_enable = bool(self.config.get("wiki_enable", True))
-        self.listen_private = bool(self.config.get("listen_private", False))
-        self.blacklist = self._parse_list(self.config.get("blacklist_groups", ""))
+        self.enabled = bool(self.cfg.get("enabled", True))
+        self.auto_learn = bool(self.cfg.get("auto_learn", True))
+        self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
+        self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 300)))
+        self.learn_force_multiplier = max(0, int(self.cfg.get("learn_force_multiplier", 2)))
+        self.learn_group_gap_seconds = max(0, int(self.cfg.get("learn_group_gap_seconds", 5)))
+        self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
+        self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
+        self.wiki_enable = bool(self.cfg.get("wiki_enable", True))
+        self.listen_private = bool(self.cfg.get("listen_private", False))
+        self.blacklist = self._parse_list(self.cfg.get("blacklist_groups", ""))
 
         data_dir = StarTools.get_data_dir("astrbot_plugin_slang")
         data_dir.mkdir(parents=True, exist_ok=True)
         self._migrate_old_data_dir(data_dir)
         self.store = JargonStore(str(data_dir / "jargon.db"))
         self.svc = SlangService(self.store)
-        self.miner = Miner(context, self.svc, self.config)
+        self.miner = Miner(context, self.svc, self.cfg)
         try:
             self._wiki_keys = self.store.wiki_keys()
         except Exception:  # noqa: BLE001
             self._wiki_keys = []
         self._locks: dict[str, asyncio.Lock] = {}
         self._learning: set[str] = set()
+        self._learn_pending: dict[str, str] = {}
+        self._learn_cooldown: dict[str, float] = {}
+        self._last_reply_at: dict[str, float] = {}
+        self._learn_task = None
         self._wiki_task = None
         self._wiki_running = False
         self._web_registered = False
@@ -134,15 +216,15 @@ class JargonLite(Star):
             await asyncio.sleep(60)
 
     async def _maybe_sync_wiki(self):
-        if not self.config.get("wiki_sync_enable", False) or self._wiki_running:
+        if not self.cfg.get("wiki_sync_enable", False) or self._wiki_running:
             return
         if not self.wiki_enable:
             return
-        hhmm = str(self.config.get("wiki_sync_time") or "04:30")
+        hhmm = str(self.cfg.get("wiki_sync_time") or "04:30")
         if time.strftime("%H:%M") != hhmm:
             return
         try:
-            interval = max(1, int(self.config.get("wiki_sync_interval_days", 7) or 7))
+            interval = max(1, int(self.cfg.get("wiki_sync_interval_days", 7) or 7))
         except (TypeError, ValueError):
             interval = 7
         last = float(self.store.meta_get("wiki_synced_at") or 0)
@@ -164,6 +246,8 @@ class JargonLite(Star):
         try:
             if self._wiki_task:
                 self._wiki_task.cancel()
+            if self._learn_task:
+                self._learn_task.cancel()
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -241,19 +325,82 @@ class JargonLite(Star):
             return
         if umo in self._learning:
             return
-        messages = self.store.buffer_take(umo, self.learn_frequency)
-        self.store.buffer_drop(umo)
-        self._learning.add(umo)
-        asyncio.create_task(self._learn(umo, scope, messages))
+        self._learn_pending[umo] = scope
+        self._ensure_learn_scheduler()
+
+    @filter.on_llm_response()
+    async def note_bot_reply(self, event: AstrMessageEvent, response):
+        """记录机器人最后一次回复，学习调度用它判断是否已空闲 120 秒。"""
+        umo = event.unified_msg_origin or ""
+        if umo:
+            self._last_reply_at[umo] = time.time()
+
+    def _ensure_learn_scheduler(self):
+        if self._learn_task is None or self._learn_task.done():
+            self._learn_task = asyncio.create_task(self._learn_scheduler())
+
+    async def _learn_scheduler(self):
+        """单 worker 串行学习：同一时间只跑一个群，避免多群同时抢模型。"""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if self._learning or not self._learn_pending:
+                    continue
+                now = time.time()
+                ready = []
+                for umo, scope in list(self._learn_pending.items()):
+                    if now < self._learn_cooldown.get(umo, 0):
+                        continue
+                    count = self.store.buffer_count(umo)
+                    if count < self.learn_frequency:
+                        self._learn_pending.pop(umo, None)
+                        continue
+                    idle = now - self._last_reply_at.get(umo, 0)
+                    # 距离机器人最后一次回复满 N 秒；缓冲达到配置倍数时强制启动
+                    force_count = self.learn_frequency * self.learn_force_multiplier
+                    forced = (self.learn_force_multiplier > 0
+                              and count >= force_count)
+                    if idle < self.learn_idle_seconds and not forced:
+                        continue
+                    ready.append((self._last_reply_at.get(umo, 0), umo, scope))
+                if not ready:
+                    continue
+                ready.sort(key=lambda item: item[0])
+                _, umo, scope = ready[0]
+                self._learn_pending.pop(umo, None)
+                messages = self.store.buffer_take(umo, self.learn_frequency)
+                if not messages:
+                    continue
+                self._learning.add(umo)
+                try:
+                    await self._learn(umo, scope, messages)
+                finally:
+                    self._learning.discard(umo)
+                if self.store.buffer_count(umo) >= self.learn_frequency:
+                    self._learn_pending[umo] = scope
+                await asyncio.sleep(self.learn_group_gap_seconds)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[slang] 学习调度异常: {exc}")
+                await asyncio.sleep(max(5, self.learn_group_gap_seconds))
 
     async def _learn(self, umo: str, scope: str, messages: list[dict]):
         lock = self._locks.setdefault(umo, asyncio.Lock())
         try:
             async with lock:
                 n = await self.miner.learn(umo, scope, messages)
-                logger.info(f"[slang] {scope} 本轮入库 {n} 条")
+            if n is None:
+                # 全部批次失败：保留缓冲，冷却后重试
+                self._learn_cooldown[umo] = time.time() + 300
+                logger.warning(f"[slang] {scope} 学习未完成，缓冲保留，5 分钟后重试")
+                return
+            ids = [m["id"] for m in messages if "id" in m]
+            self.store.buffer_delete(ids)
+            logger.info(f"[slang] {scope} 本轮入库 {n} 条，已清理 {len(ids)} 条缓冲")
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"[slang] 学习异常: {exc}")
+            self._learn_cooldown[umo] = time.time() + 300
+            logger.error(f"[slang] 学习异常，缓冲保留: {exc}")
         finally:
             self._learning.discard(umo)
 
@@ -319,6 +466,7 @@ class JargonLite(Star):
             ("ping", self.api_ping, ["GET", "POST"], "连通性自检"),
             ("groups", self.api_groups, ["GET", "POST"], "群列表"),
             ("tree", self.api_tree, ["GET", "POST"], "侧栏树"),
+            ("lookup", self.api_lookup, ["GET", "POST"], "录入前查重"),
             ("add", self.api_add, ["POST"], "手动录入"),
             ("update", self.api_update, ["POST"], "改词条"),
             ("delete", self.api_delete, ["POST"], "删除"),
@@ -485,21 +633,44 @@ class JargonLite(Star):
             "enabled": self.enabled, "stats": self._stats_web(),
             "total": total, "page": page, "size": size, "items": items}}
 
-    async def api_add(self):
+    async def api_lookup(self):
         p = await self._payload()
-        content = str(p.get("content") or "").strip()[:32]
-        meaning = str(p.get("meaning") or "").strip()[:500]
+        name = str(p.get("name") or p.get("content") or "").strip()[:32]
         scope = str(p.get("scope") or "").strip()
         if scope == "__global__":
             scope = ""
+        if not name:
+            return {"status": "error", "message": "词条名不能为空", "data": {}}
+        return {"status": "ok", "message": "", "data": {
+            "items": self.svc.lookup(name, scope)}}
+
+    async def api_add(self):
+        p = await self._payload()
+        content = str(p.get("content") or "").strip()[:32]
+        meaning = str(p.get("meaning") or "").strip()[:1000]
+        scope = str(p.get("scope") or "").strip()
+        if scope == "__global__":
+            scope = ""
+        keywords = str(p.get("keywords") or p.get("aliases") or "").strip()
+        limit = max(1, int(self.cfg.get("max_meaning_chars", 200)))
+        if len(meaning) > limit:
+            return {"status": "error",
+                    "message": f"内容 {len(meaning)}/{limit} 字，请删减后再录入",
+                    "data": {}}
         try:
-            self.svc.add_manual(content, meaning, scope=scope)
+            self.svc.add_manual(content, meaning, scope=scope,
+                                keywords=keywords)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001
             return self._error("操作", exc)
         where = "全局" if not scope else f"群 {scope}"
-        return {"status": "ok", "message": f"「{content}」已录入（{where}）", "data": {}}
+        msg = f"「{content}」已录入（{where}）"
+        # 手动/自动隔离：自动区已有同名时仍允许手动新增，但必须说清楚没覆盖
+        if (self.store.repo("auto").find(content, scope)
+                or self.store.repo("auto_pending").find(content, scope)):
+            msg += "；黑话库已有同名条目，未覆盖"
+        return {"status": "ok", "message": msg, "data": {}}
 
     async def api_update(self):
         p = await self._payload()
@@ -510,6 +681,7 @@ class JargonLite(Star):
         scope = str(p.get("scope") or "").strip() if "scope" in p else None
         if scope == "__global__":
             scope = ""
+        keywords = str(p.get("keywords") or "").strip() if "keywords" in p else None
         table = str(p.get("table") or "").strip()
         if table not in TABLES:
             table = self._resolve_edit_table(
@@ -518,8 +690,14 @@ class JargonLite(Star):
             return {"status": "error",
                     "message": "页面版本过旧，无法确定要修改哪张表。请按 Ctrl+F5 强制刷新后重试。",
                     "data": {}}
+        limit = max(1, int(self.cfg.get("max_meaning_chars", 200)))
+        if len(meaning) > limit:
+            return {"status": "error",
+                    "message": f"内容 {len(meaning)}/{limit} 字，请删减后再保存",
+                    "data": {}}
         try:
-            rec = self.svc.update(table, old_name, old_scope, name, meaning, scope)
+            rec = self.svc.update(table, old_name, old_scope, name, meaning, scope,
+                                  keywords=keywords)
         except SlangError as exc:
             return {"status": "error", "message": str(exc), "data": {}}
         except Exception as exc:  # noqa: BLE001
@@ -589,10 +767,22 @@ class JargonLite(Star):
             return self._error("操作", exc)
         return {"status": "ok", "message": f"「{name}」已经是全局条目", "data": {}}
 
+    def _set_config_path(self, path, value):
+        node = self.config
+        for part in path[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        if len(path) > 1:
+            node.pop(path[-1], None)
+        node[path[-1]] = value
+
     async def api_switch(self):
         p = await self._payload()
         self.enabled = bool(p.get("enabled"))
-        self.config["enabled"] = self.enabled
+        self._set_config_path(("basic", "enabled"), self.enabled)
         if hasattr(self.config, "save_config"):
             try:
                 self.config.save_config()
@@ -611,27 +801,51 @@ class JargonLite(Star):
         except Exception:  # noqa: BLE001
             return []
         fields = []
-        for key, spec in raw.items():
-            fields.append({
-                "key": key, "label": spec.get("description", key),
-                "type": spec.get("type", "string"),
-                "default": spec.get("default"),
-                "min": spec.get("min"), "max": spec.get("max"),
-            })
+
+        def walk(items, prefix=()):
+            for key, spec in items.items():
+                typ = spec.get("type", "string")
+                path = prefix + (key,)
+                if typ == "object" and isinstance(spec.get("items"), dict):
+                    walk(spec["items"], path)
+                    continue
+                group_key = prefix[0] if prefix else ""
+                group_spec = raw.get(group_key) if group_key else {}
+                fields.append({
+                    "key": key, "path": list(path),
+                    "group": spec.get("group") or group_key,
+                    "group_label": (group_spec or {}).get("description") or group_key,
+                    "label": spec.get("description", key),
+                    "type": typ, "default": spec.get("default"),
+                    "min": spec.get("min"), "max": spec.get("max"),
+                    "options": spec.get("options"),
+                    "labels": spec.get("labels"),
+                    "condition": spec.get("condition"),
+                    "hint": spec.get("hint"),
+                })
+
+        walk(raw)
         return fields
 
     def _apply_config(self):
-        self.enabled = bool(self.config.get("enabled", True))
-        self.auto_learn = bool(self.config.get("auto_learn", True))
-        self.learn_frequency = max(5, int(self.config.get("learn_frequency", 50)))
-        self.inject_max = max(1, int(self.config.get("inject_max", 3)))
-        self.max_meaning = max(20, int(self.config.get("max_meaning_chars", 200)))
-        self.wiki_enable = bool(self.config.get("wiki_enable", True))
-        self.listen_private = bool(self.config.get("listen_private", False))
-        self.blacklist = self._parse_list(self.config.get("blacklist_groups", ""))
+        self.enabled = bool(self.cfg.get("enabled", True))
+        self.auto_learn = bool(self.cfg.get("auto_learn", True))
+        self.learn_frequency = max(5, int(self.cfg.get("learn_frequency", 50)))
+        self.learn_idle_seconds = max(0, int(self.cfg.get("learn_idle_seconds", 300)))
+        self.learn_force_multiplier = max(0, int(self.cfg.get("learn_force_multiplier", 2)))
+        self.learn_group_gap_seconds = max(0, int(self.cfg.get("learn_group_gap_seconds", 5)))
+        self.inject_max = max(1, int(self.cfg.get("inject_max", 3)))
+        self.max_meaning = max(20, int(self.cfg.get("max_meaning_chars", 200)))
+        self.wiki_enable = bool(self.cfg.get("wiki_enable", True))
+        self.listen_private = bool(self.cfg.get("listen_private", False))
+        self.blacklist = self._parse_list(self.cfg.get("blacklist_groups", ""))
         try:
-            self.miner.extract_max = max(1, int(self.config.get("extract_max", 5)))
-            self.miner.reject_words = parse_words(self.config.get("reject_words", ""))
+            self.miner.extract_max = max(1, int(self.cfg.get("extract_max", 5)))
+            self.miner.reject_words = parse_words(self.cfg.get("reject_words", ""))
+            self.miner.batch_size = max(3, int(self.cfg.get("learn_batch_size", 15)))
+            self.miner.batch_delay_ms = max(0, int(self.cfg.get("learn_batch_delay_ms", 600)))
+            self.miner.batch_timeout = max(
+                300, int(self.cfg.get("learn_batch_timeout", 300)))
         except Exception:  # noqa: BLE001
             pass
 
@@ -645,8 +859,9 @@ class JargonLite(Star):
                 if key not in p:
                     continue
                 raw = p[key]
+                path = tuple(f.get("path") or (key,))
                 if typ == "bool":
-                    self.config[key] = bool(raw)
+                    self._set_config_path(path, bool(raw))
                 elif typ == "int":
                     try:
                         v = int(raw)
@@ -656,12 +871,12 @@ class JargonLite(Star):
                         v = max(int(f["min"]), v)
                     if f.get("max") is not None:
                         v = min(int(f["max"]), v)
-                    self.config[key] = v
+                    self._set_config_path(path, v)
                 else:
                     val = str(raw if raw is not None else "").strip()
                     if key == "blacklist_groups":
                         val = ",".join(self._split_list(val))
-                    self.config[key] = val
+                    self._set_config_path(path, val)
                 changed.append(key)
             if changed:
                 self._apply_config()
@@ -678,7 +893,7 @@ class JargonLite(Star):
                                   "type": meta.type or ""})
         except Exception:  # noqa: BLE001
             pass
-        values = {f["key"]: self.config.get(f["key"], f["default"]) for f in fields}
+        values = {f["key"]: self.cfg.get(f["key"], f["default"]) for f in fields}
         values["blacklist_groups"] = ",".join(
             self._split_list(values.get("blacklist_groups", "")))
         return {"status": "ok", "message": "已保存" if changed else "", "data": {

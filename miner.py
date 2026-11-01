@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT
 """提取 + 自审。LLM 调用通过 AstrBot provider，解析逻辑纯本地。"""
 
+import asyncio
+import copy
 import json
 import re
 
@@ -79,11 +81,29 @@ def _clean_meaning(s: str, limit: int) -> str:
 
 
 def parse_words(raw) -> set[str]:
-    """拒绝词表解析：中英文逗号、顿号、分号、空白都算分隔符。"""
+    """拒绝词表解析：只按中英文逗号分隔，保持与其他列表设置一致。"""
     if not raw:
         return set()
-    parts = re.split(r"[,，、;；\s]+", str(raw))
+    parts = re.split(r"[,，]+", str(raw))
     return {p.strip().casefold() for p in parts if p.strip()}
+
+
+
+_ID_WORDS = r"(?:QQ\s*)?(?:ID|id|Id|账号|号码|号)"
+
+
+def is_low_value(name: str, meaning: str) -> bool:
+    """判断“群友 XXX 的 ID”这类同义反复、没有新信息的词条。"""
+    name = (name or "").strip()
+    text = re.sub(r"\s+", " ", (meaning or "").strip())
+    if not name or not text:
+        return False
+    n = re.escape(name)
+    patterns = [
+        rf"^(?:群友\s*)?{n}\s*(?:[（(][^）)]*[）)])?\s*(?:的\s*)?{_ID_WORDS}$",
+        rf"^群友\s*{n}\s*$",
+    ]
+    return any(re.match(p, text) for p in patterns)
 
 
 class Miner:
@@ -94,6 +114,46 @@ class Miner:
         self.max_meaning = int(config.get("max_meaning_chars", 200) or 200)
         self.extract_max = int(config.get("extract_max", 5) or 5)
         self.reject_words = parse_words(config.get("reject_words", ""))
+        self.batch_size = max(3, int(config.get("learn_batch_size", 15) or 15))
+        self.batch_delay_ms = max(0, int(config.get("learn_batch_delay_ms", 600) or 600))
+        # 思考模型单批 15 条经常超过 2 分钟；低于 300 秒一律抬到 300
+        self.batch_timeout = max(300, int(config.get("learn_batch_timeout", 300) or 300))
+        # 学习时关思考的方式：auto/off/openai/glm/gemini/deepseek/custom
+        self.think_mode = self._resolve_think_mode(config)
+        self.extract_extra_body = self._parse_extra_body(
+            config.get("extract_extra_body", ""))
+        self.review_mode = self._resolve_review_mode(config)
+        self.review_extra_body = self._parse_extra_body(
+            config.get("review_extra_body", ""))
+        self._no_think_blocked: set[str] = set()
+        self._thinking_logged: set[str] = set()
+
+    @staticmethod
+    def _resolve_think_mode(config) -> str:
+        mode = str(config.get("extract_thinking") or "").strip().lower()
+        if mode:
+            return mode
+        # 旧版布尔配置
+        return "auto" if bool(config.get("extract_no_think", True)) else "off"
+
+    @staticmethod
+    def _resolve_review_mode(config) -> str:
+        # 默认保持思考，与提取分开配置
+        return str(config.get("review_thinking") or "off").strip().lower()
+
+    @staticmethod
+    def _parse_extra_body(raw) -> dict:
+        if isinstance(raw, dict):
+            return raw
+        if not raw:
+            return {}
+        try:
+            value = json.loads(str(raw))
+            return value if isinstance(value, dict) else {}
+        except Exception:  # noqa: BLE001
+            logger.warning("[slang] extract_extra_body 不是合法 JSON，忽略")
+            return {}
+
 
     def _provider(self, umo):
         pid = str(self.config.get("provider_id") or "").strip()
@@ -117,44 +177,174 @@ class Miner:
         except Exception:  # noqa: BLE001
             return None
 
-    async def _chat(self, prompt: str, umo: str) -> str:
+    @staticmethod
+    def _provider_key(provider) -> str:
+        cfg = getattr(provider, "provider_config", {}) or {}
+        return str(cfg.get("id") or id(provider))
+
+    def _thinking_extra(self, provider):
+        """返回 (custom_extra_body, provider_config 顶层覆盖)。"""
+        mode = self.think_mode
+        if mode == "off":
+            return {}, {}
+        if mode == "custom":
+            return dict(self.extract_extra_body), {}
+        if mode == "glm":
+            return {"thinking": {"type": "disabled"}}, {}
+        if mode == "gemini":
+            return {}, {"gm_thinking_config": {"budget": 0}}
+        if mode == "deepseek":
+            return {"reasoning_effort": "none"}, {}
+        if mode == "openai":
+            return {"reasoning_effort": "none"}, {}
+        # auto：按 provider 标识猜
+        cfg = getattr(provider, "provider_config", {}) or {}
+        blob = " ".join(str(cfg.get(k, "")) for k in
+                        ("id", "model", "provider_source_id", "type")).lower()
+        if "glm" in blob or "zhipu" in blob:
+            return {"thinking": {"type": "disabled"}}, {}
+        if "gemini" in blob:
+            return {}, {"gm_thinking_config": {"budget": 0}}
+        return {"reasoning_effort": "none"}, {}
+
+    def _no_think_provider(self, provider):
+        """复制 provider，只改 custom_extra_body；不改全局配置、不建新提供商。"""
+        mode = self.think_mode
+        if mode == "off":
+            return provider
+        key = f"{self._provider_key(provider)}:{mode}"
+        if key in self._no_think_blocked:
+            return provider
+        try:
+            extra, updates = self._thinking_extra(provider)
+            if not extra and not updates:
+                return provider
+            cfg = dict(getattr(provider, "provider_config", {}) or {})
+            if extra:
+                merged = dict(cfg.get("custom_extra_body") or {})
+                merged.update(extra)
+                cfg["custom_extra_body"] = merged
+            for key, value in updates.items():
+                cfg[key] = value
+            clone = copy.copy(provider)
+            clone.provider_config = cfg
+            if mode not in self._thinking_logged:
+                self._thinking_logged.add(mode)
+                logger.info(
+                    f"[slang] 学习关思考模式 {mode}: extra={extra}, cfg={updates}")
+            return clone
+        except Exception:  # noqa: BLE001
+            return provider
+
+    async def _call_provider(self, provider, prompt, timeout):
+        coro = provider.text_chat(prompt=prompt)
+        if timeout:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        return await coro
+
+    async def _chat(self, prompt: str, umo: str, timeout: int | None = None) -> str:
         provider = self._provider(umo)
         if not provider:
             logger.warning("[slang] 没有可用模型，跳过")
             return ""
         try:
-            resp = await provider.text_chat(prompt=prompt)
+            use = self._no_think_provider(provider)
+            try:
+                resp = await self._call_provider(use, prompt, timeout)
+            except asyncio.TimeoutError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if use is provider:
+                    raise
+                self._no_think_blocked.add(
+                    f"{self._provider_key(provider)}:{self.think_mode}")
+                logger.info(
+                    f"[slang] 该模型不支持关思考，回退普通请求：{exc}")
+                resp = await self._call_provider(provider, prompt, timeout)
             return (resp.completion_text or "").strip()
+        except asyncio.TimeoutError:
+            logger.warning(f"[slang] 模型调用超时（{timeout}s），本批跳过")
+            return ""
         except Exception as exc:  # noqa: BLE001
             logger.error(f"[slang] 模型调用失败: {exc}")
             return ""
 
-    async def learn(self, umo: str, scope: str, messages: list[dict]) -> int:
+    @staticmethod
+    def _merge_keywords(a: str, b: str) -> str:
+        out = []
+        for raw in (a, b):
+            for x in re.split(r"[,，、;；\s]+", raw or ""):
+                x = x.strip()
+                if x and x not in out:
+                    out.append(x)
+        return ",".join(out)[:300]
+
+    async def learn(self, umo: str, scope: str,
+                    messages: list[dict]) -> int | None:
+        """分批提取 + 合并候选 + 一次自审。
+
+        返回入库条数；如果所有批次都失败（超时/解析失败）返回 None，
+        让上层保留缓冲、进入冷却。
+        """
+        if not messages:
+            return 0
         chat = "\n".join(f"{m['sender']}: {m['text']}" for m in messages)[-4000:]
-        raw = await self._chat(
-            EXTRACT_PROMPT.replace("{n}", str(self.extract_max)).replace("{chat}", chat), umo)
-        items = parse_json(raw)
-        if not isinstance(items, list) or not items:
+        size = self.batch_size
+        batches = [messages[i:i + size] for i in range(0, len(messages), size)]
+        candidates: dict[str, dict] = {}
+        failed = 0
+
+        logger.info(f"[slang] {scope} 开始分批学习：{len(messages)} 条 / {len(batches)} 批")
+        for idx, batch in enumerate(batches):
+            text = "\n".join(f"{m['sender']}: {m['text']}" for m in batch)[-4000:]
+            raw = await self._chat(
+                EXTRACT_PROMPT.replace("{n}", str(self.extract_max))
+                .replace("{chat}", text), umo, self.batch_timeout)
+            items = parse_json(raw)
+            if not isinstance(items, list):
+                failed += 1
+                logger.warning(f"[slang] {scope} 第 {idx + 1}/{len(batches)} 批解析失败")
+            else:
+                for it in items[: self.extract_max]:
+                    if not isinstance(it, dict):
+                        continue
+                    name = _clean_name(it.get("name"))
+                    meaning = _clean_meaning(it.get("meaning"), self.max_meaning)
+                    if not name or not meaning:
+                        continue
+                    item = {
+                        "name": name, "meaning": meaning,
+                        "keywords": _clean_meaning(it.get("aliases"), 40),
+                        "evidence": _clean_meaning(it.get("evidence"), 60),
+                    }
+                    cur = candidates.get(name)
+                    if cur is None:
+                        candidates[name] = item
+                    else:
+                        cur["keywords"] = self._merge_keywords(
+                            cur["keywords"], item["keywords"])
+                        if not cur["evidence"]:
+                            cur["evidence"] = item["evidence"]
+            if idx < len(batches) - 1 and self.batch_delay_ms:
+                await asyncio.sleep(self.batch_delay_ms / 1000)
+
+        if failed and failed == len(batches):
+            logger.warning(f"[slang] {scope} 所有 {len(batches)} 批均失败，保留缓冲稍后重试")
+            return None
+        if not candidates:
             logger.info(f"[slang] {scope} 本轮没提取到条目")
             return 0
 
-        cleaned = []
-        for it in items[: self.extract_max]:
-            if not isinstance(it, dict):
+        cleaned = list(candidates.values())[: self.extract_max]
+        kept = []
+        for it in cleaned:
+            if is_low_value(it["name"], it["meaning"]):
+                logger.info(f"[slang] {scope} 过滤无信息量 ID 词条：{it['name']}")
                 continue
-            name = _clean_name(it.get("name"))
-            meaning = _clean_meaning(it.get("meaning"), self.max_meaning)
-            if not name or not meaning:
-                continue
-            cleaned.append({
-                "name": name,
-                "meaning": meaning,
-                "aliases": _clean_meaning(it.get("aliases"), 40),
-                "evidence": _clean_meaning(it.get("evidence"), 60),
-            })
+            kept.append(it)
+        cleaned = kept
         if not cleaned:
             return 0
-
         if self.reject_words:
             kept = []
             for it in cleaned:
@@ -177,7 +367,7 @@ class Miner:
                 certain, reason = False, "含义空泛（同义反复）"
             self.store.submit(
                 item["name"], item["meaning"], scope=scope,
-                aliases=item["aliases"], evidence=item["evidence"],
+                aliases=item["keywords"], evidence=item["evidence"],
                 auto_note=reason, approved=certain,
                 contributor=self._contributor(messages, item["name"]),
             )
@@ -185,11 +375,18 @@ class Miner:
             logger.info(
                 f"[slang] {scope} {'直接入库' if certain else '进待审'}："
                 f"{item['name']} = {item['meaning']}")
+        logger.info(f"[slang] {scope} 分批学习完成：候选 {len(candidates)}，入库 {saved}，失败批 {failed}")
         return saved
 
     async def _review(self, umo: str, items: list[dict]) -> dict[str, tuple[bool, str]]:
         lines = "\n".join(f"- {it['name']}：{it['meaning']}" for it in items)
-        raw = await self._chat(REVIEW_PROMPT.replace("{items}", lines), umo)
+        old_mode, old_extra = self.think_mode, self.extract_extra_body
+        self.think_mode, self.extract_extra_body = self.review_mode, self.review_extra_body
+        try:
+            raw = await self._chat(REVIEW_PROMPT.replace("{items}", lines), umo,
+                                   self.batch_timeout)
+        finally:
+            self.think_mode, self.extract_extra_body = old_mode, old_extra
         data = parse_json(raw)
         out: dict[str, tuple[bool, str]] = {}
         if isinstance(data, list):

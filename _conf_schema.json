@@ -1,82 +1,229 @@
 {
-  "enabled": {
-    "description": "总开关",
-    "type": "bool",
-    "default": true
+  "basic": {
+    "description": "基础设置",
+    "type": "object",
+    "hint": "总开关、私聊学习和群黑名单",
+    "items": {
+      "enabled": {
+        "description": "总开关",
+        "type": "bool",
+        "default": true
+      },
+      "listen_private": {
+        "description": "是否也学习私聊",
+        "type": "bool",
+        "default": false
+      },
+      "blacklist_groups": {
+        "description": "不学习的群号，逗号分隔",
+        "type": "string",
+        "default": ""
+      }
+    }
   },
-  "auto_learn": {
-    "description": "是否自动学习群聊黑话（会本地缓存群聊文本片段用于提取，触发时发送给你配置的模型）",
-    "type": "bool",
-    "default": true
+  "learning": {
+    "description": "自动学习",
+    "type": "object",
+    "hint": "控制什么时候学、每批多少条、用哪个模型",
+    "items": {
+      "auto_learn": {
+        "description": "是否自动学习群聊黑话（会本地缓存群聊文本片段用于提取，触发时发送给你配置的模型）",
+        "type": "bool",
+        "default": true
+      },
+      "learn_frequency": {
+        "description": "每个群累计多少条消息触发一次提取",
+        "type": "int",
+        "default": 50,
+        "min": 5,
+        "max": 10000
+      },
+      "learn_idle_seconds": {
+        "description": "距机器人最后一次回复多少秒后才开始学习",
+        "type": "int",
+        "default": 300,
+        "min": 0,
+        "max": 3600,
+        "hint": "0 表示不等待；默认 300 秒，建议 300–600。缓冲达到「防饿死倍数」时会强制开始，避免活跃群一直学不了。"
+      },
+      "learn_force_multiplier": {
+        "description": "防饿死倍数（缓冲达到阈值几倍时强制学习）",
+        "type": "int",
+        "default": 2,
+        "min": 0,
+        "max": 10,
+        "hint": "0 表示不强制，永远等满空闲秒数；默认 2 即缓冲达到 2 × learn_frequency 时强制启动。"
+      },
+      "learn_group_gap_seconds": {
+        "description": "一个群学完后，间隔多少秒再跑下一个群",
+        "type": "int",
+        "default": 5,
+        "min": 0,
+        "max": 300,
+        "hint": "多个群同时待学时由单 worker 串行执行；默认 5 秒，避免连续请求挤在一起。"
+      },
+      "learn_batch_size": {
+        "description": "分批学习：每批多少条消息（建议 10-20，太小语境不足）",
+        "type": "int",
+        "default": 15,
+        "min": 3,
+        "max": 40
+      },
+      "learn_batch_delay_ms": {
+        "description": "分批学习：批间等待毫秒，给前台聊天让路",
+        "type": "int",
+        "default": 600,
+        "min": 0,
+        "max": 5000
+      },
+      "learn_batch_timeout": {
+        "description": "分批学习：单批超时秒数，超时跳过该批",
+        "type": "int",
+        "default": 300,
+        "min": 120,
+        "max": 600
+      },
+      "extract_max": {
+        "description": "单次提取的最大条数",
+        "type": "int",
+        "default": 5,
+        "min": 1,
+        "max": 100
+      },
+      "provider_id": {
+        "description": "提取用的模型 ID，留空用当前会话模型",
+        "type": "string",
+        "default": ""
+      },
+      "extract_thinking": {
+        "description": "学习时如何关闭模型思考",
+        "type": "string",
+        "default": "auto",
+        "options": [
+          "auto",
+          "off",
+          "openai",
+          "glm",
+          "gemini",
+          "deepseek",
+          "custom"
+        ],
+        "labels": [
+          "自动识别",
+          "不处理（保持思考）",
+          "OpenAI / LM Studio",
+          "GLM",
+          "Gemini",
+          "DeepSeek",
+          "自定义"
+        ],
+        "hint": "auto 会按 provider 猜参数并自动回退；custom 使用下面的自定义 JSON。DeepSeek 通常没有通用开关，建议提取直接换 deepseek-chat。"
+      },
+      "extract_extra_body": {
+        "description": "自定义请求参数（JSON）",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "extract_thinking": "custom"
+        },
+        "hint": "仅在「自定义」时显示。示例：{\"reasoning_effort\":\"none\"}、{\"thinking\":{\"type\":\"disabled\"}}、{\"thinking_config\":{\"thinking_budget\":0}}"
+      },
+      "review_thinking": {
+        "description": "自审时如何关闭模型思考",
+        "type": "string",
+        "default": "off",
+        "options": [
+          "auto",
+          "off",
+          "openai",
+          "glm",
+          "gemini",
+          "deepseek",
+          "custom"
+        ],
+        "labels": [
+          "自动识别",
+          "保持思考（推荐）",
+          "OpenAI / LM Studio 关思考",
+          "GLM 关思考",
+          "Gemini 关思考",
+          "DeepSeek 关思考",
+          "自定义"
+        ],
+        "hint": "默认保持思考，只让提取关思考；想自审也提速可改成自动识别或对应后端。"
+      },
+      "review_extra_body": {
+        "description": "自审自定义请求参数（JSON）",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "review_thinking": "custom"
+        },
+        "hint": "仅在自审选「自定义」时显示，格式同提取的自定义 JSON。"
+      }
+    }
   },
-  "learn_frequency": {
-    "description": "每个群累计多少条消息触发一次提取",
-    "type": "int",
-    "default": 50,
-    "min": 5,
-    "max": 10000
+  "inject": {
+    "description": "注入设置",
+    "type": "object",
+    "hint": "控制每轮注入多少条、单条含义多长",
+    "items": {
+      "inject_max": {
+        "description": "单次注入的最大条数",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 50
+      },
+      "max_meaning_chars": {
+        "description": "单条含义的字数上限，超出截断",
+        "type": "int",
+        "default": 200,
+        "min": 20,
+        "max": 1000
+      }
+    }
   },
-  "extract_max": {
-    "description": "单次提取的最大条数",
-    "type": "int",
-    "default": 5,
-    "min": 1,
-    "max": 100
+  "review": {
+    "description": "候选过滤",
+    "type": "object",
+    "hint": "命中拒绝词的候选不会进入自审",
+    "items": {
+      "reject_words": {
+        "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号分隔",
+        "type": "string",
+        "default": "",
+        "hint": "例如：摸鱼,牢c；只按逗号分隔，空格和顿号会保留在词里。"
+      }
+    }
   },
-  "inject_max": {
-    "description": "单次注入的最大条数",
-    "type": "int",
-    "default": 3,
-    "min": 1,
-    "max": 50
-  },
-  "max_meaning_chars": {
-    "description": "单条含义的字数上限，超出截断",
-    "type": "int",
-    "default": 200,
-    "min": 20,
-    "max": 1000
-  },
-  "provider_id": {
-    "description": "提取用的模型 ID，留空用当前会话模型",
-    "type": "string",
-    "default": ""
-  },
-  "listen_private": {
-    "description": "是否也学习私聊",
-    "type": "bool",
-    "default": false
-  },
-  "blacklist_groups": {
-    "description": "不学习的群号，逗号分隔",
-    "type": "string",
-    "default": ""
-  },
-  "wiki_enable": {
-    "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
-    "type": "bool",
-    "default": true
-  },
-  "wiki_sync_enable": {
-    "description": "自动同步梗Wiki（公开 API）",
-    "type": "bool",
-    "default": false
-  },
-  "wiki_sync_interval_days": {
-    "description": "梗库自动同步间隔（天）",
-    "type": "int",
-    "default": 7,
-    "min": 1,
-    "max": 365
-  },
-  "wiki_sync_time": {
-    "description": "每天几点几分检查同步，HH:MM",
-    "type": "string",
-    "default": "04:30"
-  },
-  "reject_words": {
-    "description": "拒绝词表：候选名称命中即丢弃，不送自审。中英文逗号、顿号、空格分隔",
-    "type": "string",
-    "default": ""
+  "wiki": {
+    "description": "梗百科",
+    "type": "object",
+    "hint": "梗库同步与侧栏显示；不需要可以关闭",
+    "items": {
+      "wiki_enable": {
+        "description": "启用梗百科（关闭后隐藏侧栏与相关设置，也不参与注入）",
+        "type": "bool",
+        "default": true
+      },
+      "wiki_sync_enable": {
+        "description": "自动同步梗Wiki（公开 API）",
+        "type": "bool",
+        "default": false
+      },
+      "wiki_sync_interval_days": {
+        "description": "梗库自动同步间隔（天）",
+        "type": "int",
+        "default": 7,
+        "min": 1,
+        "max": 365
+      },
+      "wiki_sync_time": {
+        "description": "每天几点几分检查同步，HH:MM",
+        "type": "string",
+        "default": "04:30"
+      }
+    }
   }
 }

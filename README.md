@@ -20,6 +20,7 @@
 ```
 群消息 → 写入 buffer（按 umo 分组）
       → 攒够 learn_frequency 条
+      → 等机器人最后一次回复满 learn_idle_seconds
       → LLM 提取（最多 extract_max 条）
       → 模型自审（certain？）
           ├─ 是 → 直接进 auto（黑话库，可注入）
@@ -53,22 +54,77 @@
 | `/yh stat` | 统计 |
 | `/yh check 一句话` | 预览这句话会注入什么 |
 
+## 学习用非思考模型
+
+插件不绑定具体厂商，学习/自审走 `provider_id` 指定的 provider；聊天仍用当前会话 provider。
+
+想降低学习延迟，给提取单独配一个**非思考模型**，或在 provider 的 `custom_extra_body` 里关掉思考：
+
+| 厂商 | 做法 |
+| --- | --- |
+| LM Studio / OpenAI 兼容 | `custom_extra_body: {"reasoning_effort": "none"}`（实测有效） |
+| OpenAI | 提取用 `gpt-4.1-mini` / `gpt-4o-mini` 这类非推理模型，或用 `reasoning_effort: "minimal"` |
+| DeepSeek | 提取用 `deepseek-chat`，不要用 `deepseek-reasoner` |
+| Gemini | 插件会注入 `gm_thinking_config.budget=0`；也可以用 `gemini-2.0-flash` |
+| GLM | 用 `glm-4-flash` / `glm-4-air` 等非思考模型 |
+
+学习页有 `extract_thinking` 下拉，不需要在后台新建重复模型：
+
+| 选项 | 行为 |
+| --- | --- |
+| 自动识别 | 按 provider 猜参数，失败自动回退（默认） |
+| 不处理 | 保持思考 |
+| OpenAI / LM Studio | `reasoning_effort: "none"` |
+| GLM | `thinking.type = disabled` |
+| Gemini | `gm_thinking_config.budget = 0` |
+| DeepSeek | 尝试 `reasoning_effort: "none"`，建议同时换 `deepseek-chat` |
+| 自定义 | 显示额外输入框，填 JSON，例如 `{"reasoning_effort":"none"}` |
+
+- 只有选「自定义」才会显示 JSON 输入框
+- 不支持或报错：自动回退普通请求，聊天不受影响
+- 自审单独用 `review_thinking`，默认「保持思考」；提取默认非思考，形成混合模式
+- 想用另一个模型提取：设置 `provider_id`，它优先级更高
+
+## 设置页布局
+
+AstrBot 插件设置页按分组显示：
+
+1. 基础设置
+2. 自动学习
+3. 注入设置
+4. 候选过滤
+5. 梗百科（置底）
+
+旧版扁平配置会在启动时自动迁移到对应分组，不需要手动改。
+
+学习调度：缓冲达到 `learn_frequency` 后不会立刻开始，而是等「距离机器人最后一次回复」满 `learn_idle_seconds`；多个群的学习任务由单 worker 串行执行，前一个群结束并间隔 `learn_group_gap_seconds` 后才开始下一个。缓冲达到 `learn_force_multiplier` 倍阈值时强制开始，避免活跃群一直不学。
+
 ## 配置
 
-后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 14 项。
+后台插件配置页与面板「设置」同源（读 `_conf_schema.json`），共 24 项。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `enabled` | true | 总开关：关掉后不学习也不注入 |
 | `auto_learn` | true | 只关学习，注入照常 |
 | `learn_frequency` | 50 | 每个群攒多少条消息触发一次提取（5–10000） |
+| `learn_idle_seconds` | 300 | 距机器人最后一次回复多少秒后才开始学习；建议 300–600，0 为不等待 |
+| `learn_force_multiplier` | 2 | 缓冲达到阈值几倍时强制学习；0 为不强制 |
+| `learn_group_gap_seconds` | 5 | 一个群学完后间隔多少秒再跑下一个群 |
+| `learn_batch_size` | 15 | 分批学习每批消息数（3–40） |
+| `learn_batch_delay_ms` | 600 | 批间等待毫秒（0–5000） |
+| `learn_batch_timeout` | 300 | 单批提取超时秒数（120–600，低于 300 按 300 处理） |
 | `extract_max` | 5 | 单次提取上限（1–100） |
 | `inject_max` | 3 | 单次注入上限（1–50） |
 | `max_meaning_chars` | 200 | 单条含义字数上限（20–1000） |
 | `provider_id` | 空 | 提取用的模型，留空用当前会话模型 |
+| `extract_thinking` | auto | 提取关思考方式：自动/不处理/OpenAI/GLM/Gemini/DeepSeek/自定义 |
+| `extract_extra_body` | 空 | 提取选「自定义」时显示的 JSON |
+| `review_thinking` | off | 自审关思考方式；off 表示保持思考 |
+| `review_extra_body` | 空 | 自审选「自定义」时显示的 JSON |
 | `listen_private` | false | 是否也学私聊 |
 | `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
-| `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。分隔符同黑名单 |
+| `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。只按中英文逗号分隔 |
 | `wiki_enable` | true | 启用梗百科；关掉后隐藏侧栏入口，也不参与注入 |
 | `wiki_sync_enable` | false | 是否定时同步梗Wiki |
 | `wiki_sync_interval_days` | 7 | 同步间隔（天，1–365） |
@@ -85,12 +141,20 @@
 
 父项可折叠；群名过长省略号；数字圆圈右对齐。
 
-手动录入遇到同名同作用域的条目会拒绝覆盖，并提示已存在的是哪一条。
+手动录入遇到同名同作用域的条目会拒绝覆盖，并提示已存在的是哪一条。关键词用于触发注入，不填则只用词条名。
+
+词条字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| 词条名 | 展示名，默认也作为触发词 |
+| 关键词 | 触发注入的词，逗号分隔；不填则只用词条名 |
+| 内容 | 注入给模型的含义 |
 
 每条三个按钮：
 
 - **审核**：待审里 = 通过（手动草稿进手动，自动草稿进黑话库）；已审 = 驳回回对应待审表
-- **修改**：改名称、含义、归属（全局 / 某个群）
+- **修改**：改名称、关键词、含义、归属（全局 / 某个群）
 - **删除**：二次确认，直接删掉
 
 待审列表支持勾选、全选本页、批量通过/删除。
@@ -115,6 +179,8 @@
 | `auto_pending` | 自动 · 待审 | ❌ |
 
 - 学习中模型自审通过的进 `auto`，没把握的进 `auto_pending`；手动录入直接进 `manual`
+- 匹配时用「词条名 + 关键词」
+- 学习按 `learn_batch_size` 分批提取，合并候选后统一自审，批间等待给前台让路
 - 页面「审核」= 搬行：待审通过后进同来源的已审表，已审驳回后回同来源的待审表
 - 操作按**自然键**定位：`(表, 名称, 作用域)`，id 只做内部主键
 - 手动与自动可以同名同群共存；但审核搬行时目标表已有同名会拒绝，避免出现两条同名
@@ -140,7 +206,7 @@ SQLite，默认在 `data/plugin_data/astrbot_plugin_slang/jargon.db`，WAL 模�
 
 | 表 | 内容 |
 | --- | --- |
-| `manual` | 手动已审：name / aliases / meaning / scope / count / auto_note / evidence / contributor |
+| `manual` | 手动已审：name / keywords / meaning / scope / count / auto_note / evidence / contributor |
 | `auto` | 自动已审，字段同上 |
 | `manual_pending` | 手动待审，字段同上 |
 | `auto_pending` | 自动待审，字段同上 |
@@ -169,7 +235,7 @@ python -m unittest discover tests -v
 
 ## 已知限制
 
-- 关键词是子串匹配，半截词要靠 `aliases` 补
+- 关键词是子串匹配，半截词要靠补充关键词覆盖
 - 提取质量取决于模型，26B 偶尔把普通词当黑话——所以有待审表；可用 `reject_words` 硬过滤掉固定不收的词
 - 模型自审可能误放行；不放心就把 `auto_learn` 关掉，只手动录入
 - 每条含义最多 `max_meaning_chars` 字、单次最多 `inject_max` 条
@@ -191,7 +257,8 @@ python -m unittest discover tests -v
 
 | 版本 | 状态 |
 | --- | --- |
-| `v1.4.10` 及以后 | **推荐使用** |
+| `v1.5.0` | **当前推荐**：关键词、分批学习、非思考提取、自审独立思考、空闲调度 |
+| `v1.4.10` | 上一稳定版，仅修复群聊误判 |
 | `v1.4.0`–`v1.4.9` | 已废弃：群消息被误判为私聊，注入与自动学习静默失效（`v1.4.5` 是唯一发出去的正式版） |
 | `v1.1.0`–`v1.3.1` | 已废弃：四表重构前的旧架构，存在严重 UI 问题（编辑/审核定位错乱、页面状态不同步等） |
 | `v1.0.x` | 历史版本，可用但不建议 |

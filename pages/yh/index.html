@@ -120,6 +120,9 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 .modal h3{font-size:15px;margin-bottom:14px}
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
 .field label{font-size:12px;color:var(--muted)}
+.label-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.counter{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.counter.over{color:var(--danger);font-weight:600}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .form-row{display:flex;gap:10px;flex-wrap:wrap}
 .form-row .field{flex:1;min-width:140px}
@@ -135,6 +138,72 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   .entry .ops{grid-area:ops;grid-template-columns:repeat(4,1fr)}
   .main-head{flex-wrap:wrap}
   .search{width:100%}
+}
+
+/* ---------- 设置页视觉刷新（参考 agent-html 的中性色/高密度，不复制其代码） ---------- */
+:root{
+  --bg:#f6f6f7; --card:#fff; --bubble:#fafafa; --text:#18181b; --muted:#71717a;
+  --line:#e4e4e7; --line-strong:#d4d4d8; --accent:#2563eb; --accent-soft:#eff6ff;
+  --radius:10px;
+}
+body{background:var(--bg)}
+.card{border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(24,24,27,.04)}
+.side{top:18px}
+.nav{border:1px solid transparent;background:transparent;border-radius:8px;margin-bottom:8px}
+.nav:hover{background:#f4f4f5;border-color:var(--line)}
+.nav.active{background:var(--accent-soft);border-color:#dbeafe;color:#1d4ed8}
+.nav .count,.sub .count{background:#f4f4f5;border:1px solid var(--line);font-weight:600}
+.entry{background:#fafafa;border:1px solid var(--line);border-radius:10px}
+.entry:hover{border-color:var(--line-strong)}
+.btn{border-radius:8px;background:#fff}
+.btn:hover{background:#fafafa;border-color:var(--line-strong)}
+input,select,textarea{border-radius:8px;border-color:var(--line);background:#fff;
+  min-height:34px;padding:7px 10px}
+input:focus,textarea:focus,select:focus{outline:2px solid #bfdbfe;outline-offset:-1px;border-color:#93c5fd}
+button.primary{border-radius:8px;background:var(--accent);border-color:var(--accent)}
+button.primary:hover{background:#1d4ed8}
+
+/* 设置弹窗 */
+.settings-modal{width:min(820px,100%);padding:0;max-height:88vh;
+  display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+.modal-head h3{margin:0;font-size:16px;line-height:1.4}
+.modal-head small{display:block;margin-top:3px;color:var(--muted);font-size:11.5px}
+.modal-close{border:1px solid var(--line);background:#fff;border-radius:7px;
+  width:28px;height:28px;padding:0;line-height:1;cursor:pointer;color:var(--muted)}
+.modal-close:hover{background:#f4f4f5;color:var(--text)}
+.modal-body{padding:16px 20px;overflow:auto}
+.settings-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 20px;border-top:1px solid var(--line);background:var(--card);
+  margin:0;position:sticky;bottom:0}
+.settings-foot .actions{display:flex;gap:8px;flex-shrink:0}
+.settings-foot small{color:var(--muted);font-size:11px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.set-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px 16px;padding:14px 16px;margin:0 0 12px;
+  border:1px solid var(--line);border-radius:10px;background:#fff}
+.set-group + .set-group{margin-top:0;padding-top:14px;border-top:1px solid var(--line)}
+.set-title{grid-column:1/-1;font-size:12px;font-weight:650;color:#3f3f46;
+  letter-spacing:.02em;margin:0 0 2px;padding-bottom:8px;border-bottom:1px solid #f4f4f5}
+.set-group .field{margin:0;gap:4px}
+.set-group .field label{font-size:11.5px;color:#52525b}
+.set-group .set-row{grid-column:1/-1;padding:2px 0;font-size:12.5px}
+.set-group .field.wide{grid-column:1/-1}
+.set-group .field small{line-height:1.45}
+input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0;accent-color:var(--accent)}
+.pick-wrap{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+  justify-self:center;cursor:pointer;border-radius:5px}
+.pick-wrap:hover{background:#f4f4f5}
+.entry .pick[type=checkbox]{width:16px;height:16px;min-height:16px;padding:0;margin:0;
+  border-radius:3px;flex:0 0 16px}
+.set-row input[type=checkbox]{width:15px;height:15px;min-height:0;padding:0}
+@media (max-width:640px){
+  .settings-modal{max-height:92vh}
+  .set-group{grid-template-columns:1fr}
+  .modal-body{padding:12px 14px}
+  .modal-head,.settings-foot{padding-left:14px;padding-right:14px}
 }
 </style>
 </head>
@@ -176,7 +245,11 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   <div class="card modal">
     <h3>修改词条</h3>
     <div class="field"><label>词条名</label><input id="editName" maxlength="32" /></div>
-    <div class="field"><label>内容</label><textarea id="editMeaning" maxlength="500"></textarea></div>
+    <div class="field"><label>关键词</label><input id="editKeywords" maxlength="300" placeholder="触发词，逗号分隔；不填则只用词条名" /></div>
+    <div class="field">
+      <div class="label-row"><label>内容</label><span class="counter" id="editCount">0/200</span></div>
+      <textarea id="editMeaning" placeholder="这条词条注入给模型的含义"></textarea>
+    </div>
     <div class="field"><label>归属</label><select id="editScope"></select></div>
     <div class="modal-foot">
       <div id="editErr" style="display:none;color:var(--danger);font-size:12px;margin-bottom:8px;line-height:1.5"></div>
@@ -190,8 +263,12 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <div class="mask" id="addMask">
   <div class="card modal">
     <h3>手动录入</h3>
-    <div class="field"><label>词条名</label><input id="addName" maxlength="32" placeholder="例如：梁文谷" /></div>
-    <div class="field"><label>内容</label><textarea id="addMeaning" maxlength="500" placeholder="例如：对梁文锋的戏称，调侃峰谷定价"></textarea></div>
+    <div class="field"><label>词条名</label><input id="addName" maxlength="32" placeholder="例如：梁文锋" /></div>
+    <div class="field"><label>关键词</label><input id="addKeywords" maxlength="300" placeholder="触发词，逗号分隔；例如：梁文峰,梁文谷" /></div>
+    <div class="field">
+      <div class="label-row"><label>内容</label><span class="counter" id="addCount">0/200</span></div>
+      <textarea id="addMeaning" placeholder="例如：DeepSeek 创始人"></textarea>
+    </div>
     <div class="field"><label>作用域</label><select id="addScope"></select></div>
     <div class="modal-foot">
       <button class="link" id="addCancel">取消</button>
@@ -202,13 +279,18 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 
 <!-- 设置弹窗 -->
 <div class="mask" id="setMask">
-  <div class="card modal">
-    <h3>设置</h3>
-    <div id="setBody"></div>
-    <div class="field"><small id="wikiMeta" style="color:var(--muted);font-size:11px"></small></div>
-    <div class="modal-foot">
-      <button class="link" id="setCancel">取消</button>
-      <button class="primary" id="setSave">保存</button>
+  <div class="card modal settings-modal">
+    <div class="modal-head">
+      <div><h3>设置</h3><small>按分组调整；保存后写入插件配置</small></div>
+      <button class="modal-close" id="setClose" title="关闭">✕</button>
+    </div>
+    <div class="modal-body" id="setBody"></div>
+    <div class="settings-foot">
+      <small id="wikiMeta"></small>
+      <div class="actions">
+        <button class="link" id="setCancel">取消</button>
+        <button class="primary" id="setSave">保存</button>
+      </div>
     </div>
   </div>
 </div>
@@ -217,7 +299,7 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
   <div class="card modal" style="width:min(420px,100%)">
     <h3 id="alertTitle">提示</h3>
     <div id="alertBody" style="font-size:13px;line-height:1.7;white-space:pre-wrap;color:#3a3b40"></div>
-    <div class="modal-foot"><button class="primary" id="alertOk">知道了</button></div>
+    <div class="modal-foot"><button class="link" id="alertCancel" style="display:none">取消</button><button class="primary" id="alertOk">知道了</button></div>
   </div>
 </div>
 
@@ -225,18 +307,36 @@ button.link{border:none;background:none;color:var(--accent);padding:6px 10px;cur
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
 const PLUGIN = "astrbot_plugin_slang";
-const PAGE_BUILD = "v1.4.10";
+const PAGE_BUILD = "v1.5.0";
 const $ = id => document.getElementById(id);
 const state = { bucket: "manual", scope: "", scopeSel: false, search: "", tree: null,
   cache: new Map(), collapsed: new Set(), page: 1, size: 50, sort: "recent",
   selected: new Set() };
 
+let alertOkHandler = null;
 function showAlert(msg, title = "提示"){
   $("alertTitle").textContent = title;
   $("alertBody").textContent = msg || "服务器没有返回内容";
+  $("alertOk").textContent = "知道了";
+  $("alertCancel").style.display = "none";
+  alertOkHandler = null;
   $("alertMask").classList.add("on");
 }
-$("alertOk").onclick = () => $("alertMask").classList.remove("on");
+function showConfirm(msg, title, onOk){
+  showAlert(msg, title);
+  $("alertOk").textContent = "仍要新建";
+  $("alertCancel").style.display = "";
+  alertOkHandler = onOk;
+}
+$("alertOk").onclick = () => {
+  $("alertMask").classList.remove("on");
+  const fn = alertOkHandler; alertOkHandler = null;
+  if (fn) fn();
+};
+$("alertCancel").onclick = () => {
+  $("alertMask").classList.remove("on");
+  alertOkHandler = null;
+};
 
 function callApi(ep, payload, ms = 10000){
   return Promise.race([
@@ -256,6 +356,11 @@ window.addEventListener("unhandledrejection", e =>
 function esc(s){
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtDate(ts){
+  const d = new Date(Number(ts) * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function normalize(raw){
   if (raw && typeof raw === "object" && "status" in raw) return raw;
@@ -354,10 +459,10 @@ function entryHTML(it){
   const note = it.auto_note ? `理由：${esc(it.auto_note)}` : "";
   const who = it.contributor ? `来源：${esc(it.contributor)}` : "";
   const meta = [src, scope, who, `×${it.count}`,
-    it.updated_at ? new Date(it.updated_at * 1000).toLocaleString("zh-CN",{hour12:false}).slice(5,16) : "",
+    it.updated_at ? fmtDate(it.updated_at) : "",
     note].filter(Boolean).join(" · ");
   const pick = it.pending
-    ? `<input type="checkbox" class="pick" data-id="${it.id}" ${state.selected.has(String(it.id)) ? "checked" : ""} />`
+    ? `<label class="pick-wrap"><input type="checkbox" class="pick" data-id="${it.id}" ${state.selected.has(String(it.id)) ? "checked" : ""} /></label>`
     : "";
   return `
   <div class="entry${it.pending ? " pending" : ""}" data-id="${it.id}">
@@ -365,6 +470,7 @@ function entryHTML(it){
     <div class="name">${esc(it.content)}</div>
     <div class="content">
       <div class="meaning">${esc(it.meaning) || "（没有含义）"}</div>
+      ${it.keywords ? `<div class="meta">关键词：${esc(it.keywords)}</div>` : ""}
       <div class="meta">${meta}</div>
     </div>
     <div class="ops">
@@ -514,7 +620,9 @@ $("list").addEventListener("click", async e => {
   if (act === "edit"){
     editing = it;
     $("editName").value = it.content;
+    $("editKeywords").value = it.keywords || "";
     $("editMeaning").value = it.meaning || "";
+    updateCounter("editMeaning", "editCount");
     fillScope($("editScope"), it.scope || "");
     $("editMask").classList.add("on");
     $("editName").focus();
@@ -533,12 +641,19 @@ $("editSave").onclick = async () => {
     showAlert("词条名和内容都不能为空", "没法保存");
     return;
   }
+  if (meaning.length > meaningLimit){
+    showAlert(`内容 ${meaning.length}/${meaningLimit} 字，超出 ${meaning.length - meaningLimit} 字。\n请删减后再保存。`, "内容超长");
+    $("editMeaning").focus();
+    return;
+  }
   const err = $("editErr");
   if (err) err.style.display = "none";
   let r;
   try {
     r = await Promise.race([
-      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope, name, meaning, scope: $("editScope").value }),
+      api("yh/update", { table: editing.table, old_name: editing.content, old_scope: editing.scope,
+        name, meaning, keywords: $("editKeywords").value.trim(),
+        scope: $("editScope").value }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("请求超时（10 秒）")), 10000)),
     ]);
   } catch (e) {
@@ -563,19 +678,60 @@ function fillScopeSelect(){
 $("addBtn").onclick = async () => {
   if (!state.tree) await loadTree();
   fillScopeSelect();
-  $("addName").value = ""; $("addMeaning").value = "";
+  $("addName").value = ""; $("addKeywords").value = "";
+  $("addMeaning").value = "";
+  updateCounter("addMeaning", "addCount");
   $("addMask").classList.add("on");
   $("addName").focus();
 };
 $("addCancel").onclick = () => $("addMask").classList.remove("on");
+async function doAdd(){
+  const name = $("addName").value.trim();
+  const meaning = $("addMeaning").value.trim();
+  const scope = $("addScope").value;
+  let r;
+  try {
+    r = await callApi("yh/add", { content: name, meaning, scope,
+      keywords: $("addKeywords").value.trim() });
+  } catch (e) {
+    showAlert("请求失败：" + ((e && e.message) || e), "录入失败");
+    return;
+  }
+  showResult(r, "录入结果");
+  if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
+}
+
 $("addSave").onclick = async () => {
   const name = $("addName").value.trim();
   const meaning = $("addMeaning").value.trim();
   const scope = $("addScope").value;
   if (!name || !meaning) return showAlert("词条名和内容都不能填", "没法录入");
-  const r = await api("yh/add", { content: name, meaning, scope });
-  showResult(r, "录入结果");
-  if (r.status === "ok"){ $("addMask").classList.remove("on"); reload(); }
+  if (meaning.length > meaningLimit){
+    showAlert(`内容 ${meaning.length}/${meaningLimit} 字，超出 ${meaning.length - meaningLimit} 字。\n请删减后再录入。`, "内容超长");
+    $("addMeaning").focus();
+    return;
+  }
+  let pre;
+  try {
+    pre = await callApi("yh/lookup", { name, scope });
+  } catch (e) {
+    showAlert("请求失败：" + ((e && e.message) || e), "查重失败");
+    return;
+  }
+  const items = (pre && pre.data && pre.data.items) || [];
+  const manualDup = items.find(x => x.table === "manual" || x.table === "manual_pending");
+  if (manualDup){
+    showAlert(`「${name}」已存在于${manualDup.table === "manual" ? "手动" : "手动待审"}：`+
+      `${(manualDup.meaning || "").slice(0, 40)}…\n未覆盖。要改内容请用「修改」。`, "已存在");
+    return;
+  }
+  const autoDup = items.find(x => x.table === "auto" || x.table === "auto_pending");
+  if (autoDup){
+    showConfirm(`黑话库已有同名条目「${name}」：\n${(autoDup.meaning || "").slice(0, 60)}…\n\n`+
+      `继续会新建一条手动条目，不会覆盖黑话库那条。`, "要新建吗？", doAdd);
+    return;
+  }
+  doAdd();
 };
 
 /* ---------- 设置 ---------- */
@@ -584,28 +740,19 @@ let cfgFields = [], cfgValues = {};
 function renderSettings(d){
   cfgFields = d.fields || [];
   cfgValues = d.values || {};
-  const groups = [
-    { title: "基础", keys: ["enabled", "auto_learn", "listen_private", "blacklist_groups"] },
-    { title: "学习与注入", keys: ["learn_frequency", "extract_max", "inject_max",
-        "max_meaning_chars", "provider_id"] },
-    { title: "梗百科", keys: ["wiki_enable", "wiki_sync_enable",
-        "wiki_sync_interval_days", "wiki_sync_time"] },
-  ];
-  const byKey = Object.fromEntries(cfgFields.map(f => [f.key, f]));
-  const used = new Set();
+  const groups = [];
+  for (const f of cfgFields){
+    let g = groups.find(x => x.key === f.group);
+    if (!g){
+      g = {key: f.group || "other", label: f.group_label || f.group || "其他", fields: []};
+      groups.push(g);
+    }
+    g.fields.push(f);
+  }
   let html = "";
   for (const g of groups){
-    const fs = g.keys.map(k => byKey[k]).filter(Boolean);
-    if (!fs.length) continue;
-    fs.forEach(f => used.add(f.key));
-    html += `<div class="set-group"><div class="set-title">${g.title}</div>`;
-    html += fs.map(f => fieldHTML(f, cfgValues[f.key])).join("");
-    html += `</div>`;
-  }
-  const rest = cfgFields.filter(f => !used.has(f.key));
-  if (rest.length){
-    html += `<div class="set-group"><div class="set-title">其他</div>`;
-    html += rest.map(f => fieldHTML(f, cfgValues[f.key])).join("");
+    html += `<div class="set-group"><div class="set-title">${esc(g.label)}</div>`;
+    html += g.fields.map(f => fieldHTML(f, cfgValues[f.key])).join("");
     html += `</div>`;
   }
   $("setBody").innerHTML = html;
@@ -618,40 +765,76 @@ function renderSettings(d){
       (d.providers || []).map(p => `<option value="${esc(p.id)}">${esc(p.id)}${p.model ? " · " + esc(p.model) : ""}</option>`).join("");
     sel.value = cur;
   }
-  // 关闭梗百科时收起下面几项
+
+  // 条件字段 + 梗百科依赖
   const wikiOn = $("setBody").querySelector('[data-key="wiki_enable"]');
-  if (wikiOn){
-    const sync = () => {
-      $("setBody").querySelectorAll(".wiki-dep").forEach(el => {
-        el.style.display = wikiOn.checked ? "" : "none";
-      });
-    };
-    wikiOn.onchange = sync; sync();
-  }
+  const syncWiki = () => {
+    if (!wikiOn) return;
+    $("setBody").querySelectorAll(".wiki-dep").forEach(el => {
+      el.style.display = wikiOn.checked ? "" : "none";
+    });
+  };
+  $("setBody").querySelectorAll("[data-key]").forEach(el => {
+    el.addEventListener("change", () => { syncConditions(); syncWiki(); });
+    el.addEventListener("input", () => { syncConditions(); syncWiki(); });
+  });
+  if (wikiOn) wikiOn.addEventListener("change", syncWiki);
+  syncConditions();
+  syncWiki();
+
   const last = d.wiki_synced_at ? new Date(Number(d.wiki_synced_at) * 1000)
     .toLocaleString("zh-CN", {hour12: false}) : "从未";
   $("wikiMeta").textContent = `梗库 ${d.wiki_count ?? 0} 条 · 上次同步 ${last}`;
 }
 
+function syncConditions(){
+  const body = $("setBody");
+  body.querySelectorAll("[data-condition]").forEach(el => {
+    let cond = {};
+    try { cond = JSON.parse(el.dataset.condition || "{}"); } catch (e) { cond = {}; }
+    let show = true;
+    for (const [key, want] of Object.entries(cond)){
+      const target = body.querySelector(`[data-key="${key}"]`);
+      if (!target) continue;
+      const val = target.type === "checkbox" ? target.checked : target.value;
+      if (String(val) !== String(want)){ show = false; break; }
+    }
+    el.style.display = show ? "" : "none";
+  });
+}
+
 function fieldHTML(f, value){
   const dep = f.key.startsWith("wiki_") && f.key !== "wiki_enable" ? "wiki-dep" : "";
+  const wide = ["blacklist_groups", "reject_words", "extract_extra_body", "review_extra_body"].includes(f.key) ? "wide" : "";
+  const cls = `field ${dep} ${wide}`;
+  const cond = f.condition ? ` data-condition="${esc(JSON.stringify(f.condition))}"` : "";
+  const hint = f.hint ? `<small style="color:var(--muted);font-size:11px">${esc(f.hint)}</small>` : "";
   if (f.type === "bool"){
-    return `<label class="set-row ${dep}">
+    return `<label class="set-row ${dep}"${cond}>
       <input type="checkbox" data-key="${f.key}" ${value ? "checked" : ""} />
       <span>${esc(f.label)}</span></label>`;
   }
   if (f.key === "provider_id"){
-    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-      <select data-key="provider_id"></select></div>`;
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
+      <select data-key="provider_id"></select>${hint}</div>`;
+  }
+  if (Array.isArray(f.options) && f.options.length){
+    const cur = String(value ?? f.default ?? "");
+    const labels = f.labels || [];
+    const opts = f.options.map((opt, i) =>
+      `<option value="${esc(opt)}" ${String(opt) === cur ? "selected" : ""}>${esc(labels[i] || opt)}</option>`
+    ).join("");
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
+      <select data-key="${f.key}">${opts}</select>${hint}</div>`;
   }
   if (f.type === "int"){
     const min = f.min != null ? `min="${f.min}"` : "";
     const max = f.max != null ? `max="${f.max}"` : "";
-    return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-      <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" /></div>`;
+    return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
+      <input type="number" data-key="${f.key}" ${min} ${max} value="${value ?? f.default ?? ""}" />${hint}</div>`;
   }
-  return `<div class="field ${dep}"><label>${esc(f.label)}</label>
-    <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" /></div>`;
+  return `<div class="${cls}"${cond}><label>${esc(f.label)}</label>
+    <input type="text" data-key="${f.key}" value="${esc(value ?? f.default ?? "")}" />${hint}</div>`;
 }
 
 $("settingsBtn").onclick = async () => {
@@ -661,6 +844,7 @@ $("settingsBtn").onclick = async () => {
   $("setMask").classList.add("on");
 };
 $("setCancel").onclick = () => $("setMask").classList.remove("on");
+$("setClose").onclick = () => $("setMask").classList.remove("on");
 $("setSave").onclick = async () => {
   const payload = {};
   $("setBody").querySelectorAll("[data-key]").forEach(el => {
@@ -754,6 +938,27 @@ document.addEventListener("keydown", e => {
     document.querySelectorAll(".mask.on").forEach(m => m.classList.remove("on"));
   }
 });
+
+let meaningLimit = 200;
+function updateCounter(inputId, countId){
+  const el = $(inputId), c = $(countId);
+  if (!el || !c) return;
+  const n = (el.value || "").length;
+  c.textContent = `${n}/${meaningLimit}`;
+  c.classList.toggle("over", n > meaningLimit);
+}
+async function loadMeaningLimit(){
+  try {
+    const r = await api("yh/config", {});
+    const v = r && r.data && r.data.values;
+    if (v && Number(v.max_meaning_chars) > 0) meaningLimit = Number(v.max_meaning_chars);
+  } catch (e) {}
+  updateCounter("editMeaning", "editCount");
+  updateCounter("addMeaning", "addCount");
+}
+$("editMeaning").addEventListener("input", () => updateCounter("editMeaning", "editCount"));
+$("addMeaning").addEventListener("input", () => updateCounter("addMeaning", "addCount"));
+loadMeaningLimit();
 
 reload();
 </script>
