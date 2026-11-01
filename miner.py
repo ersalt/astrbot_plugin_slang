@@ -81,10 +81,10 @@ def _clean_meaning(s: str, limit: int) -> str:
 
 
 def parse_words(raw) -> set[str]:
-    """拒绝词表解析：中英文逗号、顿号、分号、空白都算分隔符。"""
+    """拒绝词表解析：只按中英文逗号分隔，保持与其他列表设置一致。"""
     if not raw:
         return set()
-    parts = re.split(r"[,，、;；\s]+", str(raw))
+    parts = re.split(r"[,，]+", str(raw))
     return {p.strip().casefold() for p in parts if p.strip()}
 
 

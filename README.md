@@ -123,7 +123,7 @@ AstrBot 插件设置页按分组显示：
 | `review_extra_body` | 空 | 自审选「自定义」时显示的 JSON |
 | `listen_private` | false | 是否也学私聊 |
 | `blacklist_groups` | 空 | 不学习的群号，中英文逗号/顿号/分号/空格都认，保存统一成英文逗号 |
-| `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。分隔符同黑名单 |
+| `reject_words` | 空 | 拒绝词表：候选名称命中即丢弃，不送自审。只按中英文逗号分隔 |
 | `wiki_enable` | true | 启用梗百科；关掉后隐藏侧栏入口，也不参与注入 |
 | `wiki_sync_enable` | false | 是否定时同步梗Wiki |
 | `wiki_sync_interval_days` | 7 | 同步间隔（天，1–365） |

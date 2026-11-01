@@ -19,7 +19,7 @@ from index import KeywordIndex  # noqa: E402
 from service import SlangError, SlangService  # noqa: E402
 
 try:
-    from miner import Miner, is_low_value  # noqa: E402
+    from miner import Miner, is_low_value, parse_words  # noqa: E402
 except ModuleNotFoundError:  # 测试环境没装 AstrBot，给 miner 一个 logger 桩
     import types
     _astrbot = types.ModuleType("astrbot")
@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # 测试环境没装 AstrBot，给 miner 一个 log
         error=lambda *a, **k: None, debug=lambda *a, **k: None)
     sys.modules["astrbot"] = _astrbot
     sys.modules["astrbot.api"] = _api
-    from miner import Miner, is_low_value  # noqa: E402
+    from miner import Miner, is_low_value, parse_words  # noqa: E402
 from store import JargonStore, clean_learning_text  # noqa: E402
 
 
@@ -310,6 +310,17 @@ class TestLowValue(unittest.TestCase):
     def test_nickname_alias_kept(self):
         self.assertFalse(is_low_value("哥布林", "群友 寰宇原神大王 的别称"))
         self.assertFalse(is_low_value("大肥鱼", "群内对某位群友的戏称"))
+
+
+class TestParseWords(unittest.TestCase):
+    def test_only_commas_split(self):
+        self.assertEqual(parse_words("甲，乙,丙"), {"甲", "乙", "丙"})
+        self.assertEqual(parse_words("a b"), {"a b"})
+        self.assertEqual(parse_words("a、b"), {"a、b"})
+
+    def test_trim_and_casefold(self):
+        self.assertEqual(parse_words(" Ab , cd ，EF "), {"ab", "cd", "ef"})
+        self.assertEqual(parse_words(""), set())
 
 
 class TestBuffer(unittest.IsolatedAsyncioTestCase):
