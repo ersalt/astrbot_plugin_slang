@@ -46,6 +46,10 @@ class TestPageContract(unittest.TestCase):
     def test_bulk_sends_items(self):
         self.assertIn('api("yh/bulk", { action, items })', self.html)
 
+    def test_slash_shortcut_ignores_inputs(self):
+        self.assertIn("isTypingTarget(e.target)", self.html)
+        self.assertIn('tagName === "TEXTAREA"', self.html)
+
     def test_pending_pick_wrap(self):
         self.assertIn('class="pick-wrap"', self.html)
         self.assertIn(".entry .pick[type=checkbox]{width:16px", self.html)

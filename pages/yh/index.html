@@ -930,8 +930,14 @@ $("searchInput").oninput = () => {
     loadList();
   }, 300);
 };
+function isTypingTarget(el){
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT" || el.isContentEditable);
+}
 document.addEventListener("keydown", e => {
-  if (e.key === "/" && document.activeElement !== $("searchInput")){
+  if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey){
+    // 正在输入框/文本域里打字时，/ 应该是普通字符
+    if (isTypingTarget(e.target) || document.querySelector(".mask.on")) return;
     e.preventDefault(); $("searchInput").focus();
   }
   if (e.key === "Escape"){
